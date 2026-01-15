@@ -93,9 +93,15 @@ class CacheStore:
             confidence=item.confidence,
         )
 
+    def invalidate(self, item: ScanItem) -> None:
+        rel = self._rel_path(item.path)
+        self._data.pop(rel, None)
+
+    def clear(self) -> None:
+        self._data.clear()
+
     def _rel_path(self, path: Path) -> str:
         try:
             return str(path.relative_to(self.source_root))
         except Exception:
             return str(path)
-

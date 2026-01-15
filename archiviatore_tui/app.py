@@ -55,6 +55,8 @@ class ArchiverApp(App):
         ("s", "rescan", "Riscansiona"),
         ("a", "analyze", "Analizza"),
         ("c", "cancel_analysis", "Stop analisi"),
+        ("R", "reanalyze_row", "Rianalizza riga"),
+        ("A", "reanalyze_all", "Rianalizza tutto"),
     ]
 
     def __init__(self, settings: Settings) -> None:
@@ -133,6 +135,55 @@ class ArchiverApp(App):
             self._analysis_worker.cancel()
         except Exception:
             pass
+        self._render_notes()
+
+    async def action_reanalyze_row(self) -> None:
+        if self._analysis_running:
+            return
+        files = self.query_one("#files", DataTable)
+        row_index = files.cursor_row
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        item = self._scan_items[row_index]
+        reset = replace(
+            item,
+            status="pending",
+            reason=None,
+            category=None,
+            reference_year=None,
+            proposed_name=None,
+            summary=None,
+            confidence=None,
+        )
+        self._scan_items[row_index] = reset
+        if self._cache:
+            self._cache.invalidate(item)
+            self._cache.save()
+        self._render_files()
+        self._update_details_from_cursor()
+        self._render_notes()
+
+    async def action_reanalyze_all(self) -> None:
+        if self._analysis_running:
+            return
+        if self._cache:
+            self._cache.clear()
+            self._cache.save()
+        self._scan_items = [
+            replace(
+                it,
+                status="pending",
+                reason=None,
+                category=None,
+                reference_year=None,
+                proposed_name=None,
+                summary=None,
+                confidence=None,
+            )
+            for it in self._scan_items
+        ]
+        self._render_files()
+        self._update_details_from_cursor()
         self._render_notes()
 
     async def on_toggle_details_pin(self, message: ToggleDetailsPin) -> None:
