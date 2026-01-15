@@ -1,12 +1,12 @@
 # amenity-stuff
 
-TUI (Terminal UI) per analizzare file in una cartella usando un LLM locale (via Ollama) e proporre:
-- categoria e anno di riferimento,
-- nuovo nome significativo,
-- destinazione in un archivio `{categoria}/{anno}`,
-con (nelle prossime milestone) approvazione per file e applicazione delle modifiche.
+Terminal UI to analyze files in a folder using a local LLM (via Ollama) and propose:
+- category and reference year,
+- a more meaningful file name,
+- a target location in an archive structured as `{category}/{year}`,
+with (in upcoming milestones) per-file approval and applying changes.
 
-## Avvio
+## Run
 
 ```bash
 python3 -m venv .venv
@@ -14,41 +14,41 @@ python3 -m venv .venv
 amenity-stuff
 ```
 
-## Sicurezza e privacy
-- Esecuzione locale: l’obiettivo è non inviare contenuti a servizi esterni.
-- I file vengono letti e analizzati localmente; con OCR attivo, il testo viene estratto anche da scansioni/immagini.
-- Prima di cambiare provider/modelli, verifica policy e gestione dati del provider.
+## Security & Privacy
+- Local-first: the goal is to avoid sending content to external services.
+- Files are read and analyzed locally; when OCR is enabled, text is extracted from scans/images too.
+- If you switch provider/models, review their policies and how they handle data.
 
-## Limitazioni (aggiornate nel tempo)
-- Parsing e OCR sono best-effort: alcuni file possono risultare `skipped` o avere output incompleto.
-- La fase “approva e sposta” non è ancora implementata (solo proposta/preview).
+## Limitations (updated over time)
+- Parsing and OCR are best-effort: some files may be `skipped` or produce incomplete output.
+- The “approve and move” phase is not implemented yet (proposal/preview only).
 
-## Provider LLM
+## LLM Provider
 
-La schermata iniziale prova a rilevare:
-- `ollama` (se installato in PATH)
+On startup the app tries to detect:
+- `ollama` (if available in `PATH`)
 
-Modelli: il progetto usa un modello testuale e (per immagini) un modello vision; i nomi esatti sono configurabili.
+Models: the app uses a text model and (for images) a vision model; exact model names are configurable.
 
-## Scansione (MVP)
+## Scan (MVP)
 
-La tabella elenca (fino a `--max-files`) i file `pdf` e `jpg/jpeg` trovati nella cartella sorgente.
+The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the selected source folder.
 
-### Tasti
-- `s` per riscansionare
-- `a` per avviare l’analisi (LLM) dei file in `pending`
-- `c` per stoppare l’analisi (poi puoi ripartire con `a`)
-- `invio/spazio` per bloccare/sbloccare il pannello dettagli (mostrato sotto la tabella)
-- `A` per forzare rianalisi di tutti i file (reset + svuota cache)
-- `R` per forzare rianalisi della riga selezionata
-- `q` o `ctrl+c` per uscire
+### Keys
+- `s` rescan
+- `a` analyze `pending` files (LLM)
+- `c` stop analysis (you can restart with `a`)
+- `enter/space` pin/unpin the details panel (below the table)
+- `A` force reanalyze all (reset + clear cache)
+- `R` force reanalyze selected row
+- `q` or `ctrl+c` quit
 
-Durante `a`, lo stato passa a `analysis` e la TUI resta utilizzabile mentre i risultati arrivano riga per riga.
+During `a`, status transitions to `analysis` and the UI remains interactive while results update row by row.
 
-### Stati
-La colonna `Stato` include un marcatore:
-- `· pending` trovato, in attesa
-- `… analysis` in analisi
-- `✓ ready` proposta pronta
-- `↷ skipped` non classificabile / confidenza bassa
-- `× error` errore I/O o Ollama
+### Status
+The `Status` column includes a marker:
+- `· pending` discovered, waiting
+- `… analysis` being analyzed
+- `✓ ready` proposal available
+- `↷ skipped` not classifiable / low confidence
+- `× error` I/O or Ollama error
