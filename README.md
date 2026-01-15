@@ -10,8 +10,8 @@ con (nelle prossime milestone) approvazione per file e applicazione delle modifi
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-./.venv/bin/python -m archiviatore_tui --source /percorso/da/analizzare --archive /percorso/archivio
+./.venv/bin/pip install .
+amenity-stuff
 ```
 
 ## Sicurezza e privacy

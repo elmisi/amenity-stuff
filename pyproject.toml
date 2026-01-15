@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amenity-stuff"
+version = "0.1.0"
+description = "Terminal UI to analyze and organize files using a local LLM (Ollama)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "amenity-stuff contributors"}]
+dependencies = [
+  "textual>=0.60,<1",
+  "pypdf>=4,<6",
+]
+
+[project.urls]
+Repository = "https://github.com/elmisi/amenity-stuff"
+
+[project.scripts]
+amenity-stuff = "archiviatore_tui.__main__:main"
+
+[tool.setuptools]
+packages = ["archiviatore_tui"]
+
