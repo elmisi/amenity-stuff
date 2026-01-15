@@ -12,6 +12,7 @@ from .analyzer import AnalysisConfig, analyze_item
 from .discovery import DiscoveryResult, discover_providers
 from .scanner import ScanItem, scan_files
 from .settings import Settings
+from .setup_screen import SetupResult, SetupScreen
 
 
 class ToggleDetailsPin(Message):
@@ -92,6 +93,21 @@ class ArchiverApp(App):
         yield Footer()
 
     async def on_mount(self) -> None:
+        initial_source = self.settings.source_root.expanduser().resolve()
+        initial_archive = self.settings.archive_root.expanduser().resolve()
+        setup: SetupResult = await self.push_screen_wait(
+            SetupScreen(source_root=initial_source, archive_root=initial_archive)
+        )
+        self.settings = Settings(
+            source_root=setup.source_root,
+            archive_root=setup.archive_root,
+            max_files=self.settings.max_files,
+            localai_base_url=self.settings.localai_base_url,
+            recursive=self.settings.recursive,
+            include_extensions=self.settings.include_extensions,
+            exclude_dirnames=self.settings.exclude_dirnames,
+        )
+
         await self._run_discovery()
         await self._run_scan()
         self.query_one("#files", DataTable).focus()
