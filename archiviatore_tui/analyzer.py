@@ -112,7 +112,88 @@ def _sanitize_name(name: str) -> str:
     name = name.strip()
     name = re.sub(r"[\\/:*?\"<>|]", " ", name)
     name = re.sub(r"\s+", " ", name)
-    return name[:120].strip()
+    return name[:180].strip()
+
+
+def _ensure_extension(proposed_name: str, original_filename: str) -> str:
+    original_ext = Path(original_filename).suffix
+    if not original_ext:
+        return proposed_name
+    if proposed_name.lower().endswith(original_ext.lower()):
+        return proposed_name
+    return proposed_name.rstrip(".") + original_ext
+
+
+_STOPWORDS = {
+    # EN
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "to",
+    "for",
+    "in",
+    "on",
+    "with",
+    "by",
+    "from",
+    # IT
+    "il",
+    "lo",
+    "la",
+    "i",
+    "gli",
+    "le",
+    "un",
+    "uno",
+    "una",
+    "e",
+    "o",
+    "di",
+    "da",
+    "del",
+    "della",
+    "dei",
+    "delle",
+    "al",
+    "alla",
+    "alle",
+    "agli",
+    "per",
+    "con",
+    "su",
+    "nel",
+    "nella",
+    "nelle",
+    "all",
+}
+
+
+def _fallback_name_from_summary(*, summary: Optional[str], original_filename: str) -> str:
+    stem = Path(original_filename).stem
+    ext = Path(original_filename).suffix
+    if not summary:
+        return _sanitize_name(stem) + ext
+
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]+", summary)
+    tokens: list[str] = []
+    for w in words:
+        lower = w.lower()
+        if lower in _STOPWORDS:
+            continue
+        if re.fullmatch(r"(19\d{2}|20\d{2})", w):
+            continue
+        if len(w) <= 2:
+            continue
+        tokens.append(w)
+        if len(tokens) >= 10:
+            break
+    if not tokens:
+        return _sanitize_name(stem) + ext
+    name = "_".join(tokens)
+    return _sanitize_name(name) + ext
 
 
 def _classify_from_text(
@@ -133,7 +214,11 @@ Goal:
 - choose a category from: {list(_ALLOWED_CATEGORIES)}
 - estimate the reference year (reference_year) the document refers to
 - estimate the production year (production_year) (if unknown: null)
-- propose a descriptive file name (proposed_name) WITHOUT category/year unless necessary
+- propose a meaningful, descriptive file name (proposed_name)
+  - use 6-12 words when possible (not too short)
+  - include key entities (company/person), document type, and month/period if present
+  - do NOT include category/year unless there is no other useful info
+  - keep it readable (avoid random IDs)
 - if unsure, set low confidence and provide skip_reason
 - if reference_year_hint is present, use it ONLY if the content doesn't clearly contradict it
 
@@ -184,6 +269,8 @@ Output JSON schema:
     if not isinstance(proposed_name, str) or not proposed_name.strip():
         return AnalysisResult(status="skipped", reason="Missing proposed name")
 
+    proposed_name = _ensure_extension(_sanitize_name(proposed_name), filename)
+
     summary = data.get("summary")
     if not isinstance(summary, str):
         summary = None
@@ -196,6 +283,10 @@ Output JSON schema:
 
     if conf is not None and conf < 0.35:
         return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf)
+
+    # If the proposed name is too short / low-signal, derive one from summary.
+    if len(Path(proposed_name).stem) < 12 or Path(proposed_name).stem.count("_") < 1:
+        proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename)
 
     # If the model didn't provide a usable year, fall back to filename/path hint.
     hint = reference_year_hint if (reference_year_hint and _is_year(reference_year_hint)) else None
@@ -211,7 +302,7 @@ Output JSON schema:
         status="ready",
         category=category,
         reference_year=reference_year,
-        proposed_name=_sanitize_name(proposed_name),
+        proposed_name=proposed_name,
         summary=(summary or "").strip()[:200] or None,
         confidence=conf,
     )
