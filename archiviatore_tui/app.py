@@ -1,0 +1,341 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+from textual.app import App, ComposeResult
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.message import Message
+from textual.widgets import DataTable, Footer, Header, Static
+from textual.worker import get_current_worker
+
+from .analyzer import AnalysisConfig, analyze_item
+from .discovery import DiscoveryResult, discover_providers
+from .scanner import ScanItem, scan_files
+from .settings import Settings
+
+
+class ToggleDetailsPin(Message):
+    def __init__(self, row_index: int) -> None:
+        super().__init__()
+        self.row_index = row_index
+
+
+class FilesTable(DataTable):
+    BINDINGS = [
+        ("enter", "toggle_pin", "Blocca dettagli"),
+        ("space", "toggle_pin", "Blocca dettagli"),
+    ]
+
+    def key_enter(self) -> None:
+        self.post_message(ToggleDetailsPin(self.cursor_row))
+
+    def key_space(self) -> None:
+        self.post_message(ToggleDetailsPin(self.cursor_row))
+
+    def action_toggle_pin(self) -> None:
+        self.post_message(ToggleDetailsPin(self.cursor_row))
+
+
+class ArchiverApp(App):
+    CSS = """
+    Screen { layout: vertical; }
+    #top { height: 2; }
+    #notes { height: auto; color: $text-muted; }
+    #files { height: 1fr; }
+    #details_box { height: 9; border: round $accent; background: $panel; }
+    #details_text { padding: 1 2; }
+    """
+
+    BINDINGS = [
+        ("q", "quit", "Esci"),
+        ("ctrl+c", "quit", "Esci"),
+        ("s", "rescan", "Riscansiona"),
+        ("a", "analyze", "Analizza"),
+        ("c", "cancel_analysis", "Stop analisi"),
+    ]
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__()
+        self.settings = settings
+        self._discovery: DiscoveryResult | None = None
+        self._scan_items: list[ScanItem] = []
+        self._scan_index_by_path: dict[str, int] = {}
+        self._analysis_running: bool = False
+        self._analysis_worker = None
+        self._analysis_cancel_requested: bool = False
+        self._details_pinned: bool = False
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(id="top"):
+            with Horizontal():
+                yield Static(f"Sorgente: {self.settings.source_root}", id="src")
+                yield Static(f"Archivio: {self.settings.archive_root}", id="arc")
+                yield Static(f"Max file: {self.settings.max_files}", id="max")
+            yield Static("Pronto.", id="notes")
+
+        files = FilesTable(id="files")
+        files.add_column("Stato", key="status")
+        files.add_column("Tipo", key="kind")
+        files.add_column("File", key="file")
+        files.add_column("Categoria", key="category")
+        files.add_column("Anno", key="year")
+        files.add_column("Nome proposto", key="name")
+        files.add_column("Motivo", key="reason")
+        files.cursor_type = "row"
+        yield files
+
+        with Container(id="details_box"):
+            with VerticalScroll():
+                yield Static("", id="details_text")
+
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        await self._run_discovery()
+        await self._run_scan()
+        self.query_one("#files", DataTable).focus()
+        self._update_details_from_cursor()
+
+    async def action_rescan(self) -> None:
+        await self._run_scan()
+
+    async def action_analyze(self) -> None:
+        await self._run_analyze()
+
+    async def action_cancel_analysis(self) -> None:
+        if not self._analysis_running or self._analysis_worker is None:
+            return
+        self._analysis_cancel_requested = True
+        try:
+            self._analysis_worker.cancel()
+        except Exception:
+            pass
+        self._render_notes()
+
+    async def on_toggle_details_pin(self, message: ToggleDetailsPin) -> None:
+        self._details_pinned = not self._details_pinned
+        self._update_details(message.row_index)
+
+    async def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "files":
+            return
+        if self._details_pinned:
+            return
+        self._update_details(event.cursor_row)
+
+    async def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
+        if event.data_table.id != "files":
+            return
+        if self._details_pinned:
+            return
+        self._update_details(event.coordinate.row)
+
+    async def _run_discovery(self) -> None:
+        notes_widget = self.query_one("#notes", Static)
+        notes_widget.update("Discovery in corso…")
+
+        def do_discover() -> DiscoveryResult:
+            return discover_providers(localai_base_url=self.settings.localai_base_url)
+
+        worker = self.run_worker(do_discover, thread=True)
+        self._discovery = await worker.wait()
+        self._render_notes()
+
+    async def _run_scan(self) -> None:
+        notes_widget = self.query_one("#notes", Static)
+        notes_widget.update("Scansione file in corso…")
+
+        files = self.query_one("#files", DataTable)
+        files.clear()
+
+        def do_scan() -> list[ScanItem]:
+            return scan_files(
+                self.settings.source_root,
+                recursive=self.settings.recursive,
+                max_files=self.settings.max_files,
+                include_extensions=self.settings.include_extensions,
+                exclude_dirnames=self.settings.exclude_dirnames,
+            )
+
+        worker = self.run_worker(do_scan, thread=True)
+        self._scan_items = await worker.wait()
+        self._render_files()
+        self._render_notes()
+        self._update_details_from_cursor()
+
+    async def _run_analyze(self) -> None:
+        if self._analysis_running:
+            return
+        self._analysis_cancel_requested = False
+        self._analysis_running = True
+        self._render_notes()
+
+        files = self.query_one("#files", DataTable)
+
+        def mark_analysis(path_str: str) -> None:
+            idx = self._scan_index_by_path.get(path_str)
+            if idx is None:
+                return
+            it = self._scan_items[idx]
+            if it.status != "pending":
+                return
+            self._scan_items[idx] = replace(it, status="analysis", reason=None)
+            files.update_cell(path_str, "status", _status_cell("analysis"))
+            files.update_cell(path_str, "reason", "")
+            if not self._details_pinned and files.cursor_row == idx:
+                self._update_details(idx)
+
+        def apply_result(path_str: str, new_item: ScanItem) -> None:
+            idx = self._scan_index_by_path.get(path_str)
+            if idx is None:
+                return
+            self._scan_items[idx] = new_item
+            files.update_cell(path_str, "status", _status_cell(new_item.status))
+            files.update_cell(path_str, "category", new_item.category or "")
+            files.update_cell(path_str, "year", new_item.reference_year or "")
+            files.update_cell(path_str, "name", new_item.proposed_name or "")
+            files.update_cell(path_str, "reason", new_item.reason or "")
+            if not self._details_pinned and files.cursor_row == idx:
+                self._update_details(idx)
+
+        def finish(cancelled: bool) -> None:
+            if cancelled:
+                for idx, it in enumerate(list(self._scan_items)):
+                    if it.status != "analysis":
+                        continue
+                    updated = replace(it, status="pending", reason="Analisi interrotta")
+                    self._scan_items[idx] = updated
+                    key = str(updated.path)
+                    files.update_cell(key, "status", _status_cell("pending"))
+                    files.update_cell(key, "reason", updated.reason or "")
+            self._analysis_running = False
+            self._render_notes()
+
+        def do_analyze_background() -> None:
+            cfg = AnalysisConfig()
+            worker = get_current_worker()
+            for it in list(self._scan_items):
+                if worker.is_cancelled:
+                    break
+                if it.status != "pending":
+                    continue
+                path_str = str(it.path)
+                self.call_from_thread(mark_analysis, path_str)
+                res = analyze_item(it, config=cfg)
+                updated = replace(
+                    it,
+                    status=res.status,
+                    reason=res.reason,
+                    category=res.category,
+                    reference_year=res.reference_year,
+                    proposed_name=res.proposed_name,
+                    summary=res.summary,
+                    confidence=res.confidence,
+                )
+                self.call_from_thread(apply_result, path_str, updated)
+            self.call_from_thread(finish, worker.is_cancelled)
+
+        self._analysis_worker = self.run_worker(do_analyze_background, thread=True, exclusive=True)
+
+    def _render_files(self) -> None:
+        files = self.query_one("#files", DataTable)
+        files.clear()
+        self._scan_index_by_path.clear()
+
+        for idx, item in enumerate(self._scan_items):
+            rel = str(item.path)
+            try:
+                rel = str(item.path.relative_to(self.settings.source_root.expanduser().resolve()))
+            except Exception:
+                pass
+            cat = item.category or ""
+            year = item.reference_year or ""
+            name = item.proposed_name or ""
+            key = str(item.path)
+            self._scan_index_by_path[key] = idx
+            files.add_row(_status_cell(item.status), item.kind, rel, cat, year, name, item.reason or "", key=key)
+
+        if files.row_count:
+            files.move_cursor(row=0, column=0, scroll=False)
+
+    def _update_details_from_cursor(self) -> None:
+        table = self.query_one("#files", DataTable)
+        if table.row_count == 0:
+            self.query_one("#details_text", Static).update("")
+            return
+        self._update_details(table.cursor_row)
+
+    def _update_details(self, row_index: int) -> None:
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        item = self._scan_items[row_index]
+        abs_path = str(item.path)
+        rel_path = abs_path
+        source_root = str(self.settings.source_root.expanduser().resolve())
+        try:
+            rel_path = str(item.path.relative_to(source_root))
+        except Exception:
+            pass
+        type_state_cat_year = " • ".join(
+            [
+                f"Tipo: {item.kind}",
+                f"Stato: {item.status}",
+                f"Categoria: {item.category or ''}",
+                f"Anno: {item.reference_year or ''}",
+            ]
+        )
+        summary = (item.summary or "").strip()
+        if summary:
+            summary_line = f"Summary: {summary}"
+        else:
+            summary_line = "Summary:"
+        text = "\n".join(
+            [
+                f"File: {abs_path}",
+                type_state_cat_year,
+                f"Nome proposto: {item.proposed_name or ''}",
+                summary_line,
+                f"Motivo: {item.reason or ''}",
+            ]
+        ).strip()
+        self.query_one("#details_text", Static).update(text)
+
+    def _render_notes(self) -> None:
+        parts: list[str] = []
+        if self._discovery:
+            parts.extend(self._discovery.notes)
+            if self._discovery.chosen_text:
+                parts.append(f"Provider testo scelto (auto): {self._discovery.chosen_text}")
+            if self._discovery.chosen_vision:
+                parts.append(f"Provider vision scelto (auto): {self._discovery.chosen_vision}")
+        if self._analysis_running:
+            if self._analysis_cancel_requested:
+                parts.append("Analisi: stop richiesto…")
+            else:
+                parts.append("Analisi: in corso…")
+        if self._scan_items:
+            pending = sum(1 for i in self._scan_items if i.status == "pending")
+            ready = sum(1 for i in self._scan_items if i.status == "ready")
+            skipped = sum(1 for i in self._scan_items if i.status == "skipped")
+            analysis = sum(1 for i in self._scan_items if i.status == "analysis")
+            err = sum(1 for i in self._scan_items if i.status == "error")
+            parts.append(
+                f"File: {len(self._scan_items)} (pending={pending}, analysis={analysis}, ready={ready}, skipped={skipped}, error={err})"
+            )
+        if self._details_pinned:
+            parts.append("Dettagli: bloccati (premi Invio/Spazio per sbloccare).")
+        if not parts:
+            parts = ["Nessuna nota."]
+        self.query_one("#notes", Static).update(" ".join(parts))
+
+
+def _status_cell(status: str) -> str:
+    marker = {
+        "pending": "·",
+        "analysis": "…",
+        "ready": "✓",
+        "skipped": "↷",
+        "error": "×",
+    }.get(status, "?")
+    return f"{marker} {status}"
