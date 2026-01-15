@@ -112,6 +112,40 @@ def _extract_year_hint_from_text(text: str) -> Optional[str]:
     return best
 
 
+def _category_hint_from_signals(*, path: Path, text: Optional[str]) -> Optional[str]:
+    hay = f"{path.as_posix()} {path.name}".lower()
+    sample = (text or "")[:8000].lower()
+    hay = hay + " " + sample
+
+    # Energy / utilities invoices and bills -> finance.
+    finance_signals = [
+        "bolletta",
+        "fattura",
+        "riepilogo fatture",
+        "periodo riferimento",
+        "protocollo",
+        "gas naturale",
+        "energia",
+        "energia elettrica",
+        "fornitura",
+        "consumo",
+        "kwh",
+        "mc",
+        "codice fiscale",
+        "p.iva",
+        "dolomiti energia",
+    ]
+    if any(s in hay for s in finance_signals):
+        return "finance"
+
+    # Technical docs / manuals -> technical.
+    technical_signals = ["manual", "datasheet", "specification", "technical", "guide", "sdk", "api"]
+    if any(s in hay for s in technical_signals):
+        return "technical"
+
+    return None
+
+
 def _extract_json(text: str) -> Optional[dict]:
     text = text.strip()
     if not text:
@@ -225,14 +259,17 @@ def _classify_from_text(
     mtime_iso: str,
     base_url: str,
     reference_year_hint: Optional[str],
+    category_hint: Optional[str],
 ) -> AnalysisResult:
     year_hint_line = f"reference_year_hint: {reference_year_hint}" if reference_year_hint else "reference_year_hint: null"
+    category_hint_line = f"category_hint: {category_hint}" if category_hint else "category_hint: null"
     prompt = f"""
 You are a document archiving assistant. Reply with VALID JSON only (no extra text).
 
 Goal:
 - understand what the document is about
 - choose a category from: {list(_ALLOWED_CATEGORIES)}
+- if category_hint is present, you may use it unless the content clearly indicates a different category
 - estimate the reference year (reference_year) the document refers to
 - estimate the production year (production_year) (if unknown: null)
 - propose a meaningful, descriptive file name (proposed_name)
@@ -247,6 +284,7 @@ Input:
 filename: {filename}
 mtime_iso: {mtime_iso}
 {year_hint_line}
+{category_hint_line}
 content:
 \"\"\"{content}\"\"\"
 
@@ -309,6 +347,10 @@ Output JSON schema:
     if len(Path(proposed_name).stem) < 12 or Path(proposed_name).stem.count("_") < 1:
         proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename)
 
+    # If category is unknown, fall back to hint.
+    if category == "unknown" and category_hint in _ALLOWED_CATEGORIES:
+        category = category_hint
+
     # If the model didn't provide a usable year, fall back to filename/path hint.
     hint = reference_year_hint if (reference_year_hint and _is_year(reference_year_hint)) else None
     if (not reference_year) and hint:
@@ -366,6 +408,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             return skipped(reason or "No extractable PDF text")
         content_year_hint = _extract_year_hint_from_text(text)
         effective_year_hint = filename_year_hint or content_year_hint
+        category_hint = _category_hint_from_signals(path=path, text=text)
         res = _classify_from_text(
             model=config.text_model,
             content=text,
@@ -373,6 +416,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
             reference_year_hint=effective_year_hint,
+            category_hint=category_hint,
         )
         if res.status == "skipped":
             return replace(
@@ -385,6 +429,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
 
     if item.kind == "image":
         effective_year_hint = filename_year_hint
+        category_hint = _category_hint_from_signals(path=path, text=None)
         caption_prompt = "Describe this image in one sentence."
         try:
             cap = generate_with_image_file(
@@ -408,6 +453,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
             reference_year_hint=effective_year_hint,
+            category_hint=category_hint,
         )
         if res.status == "skipped":
             return replace(
