@@ -9,6 +9,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
 
 from .analyzer import AnalysisConfig, analyze_item
+from .config import AppConfig, save_config
 from .discovery import DiscoveryResult, discover_providers
 from .scanner import ScanItem, scan_files
 from .settings import Settings
@@ -107,6 +108,7 @@ class ArchiverApp(App):
             include_extensions=self.settings.include_extensions,
             exclude_dirnames=self.settings.exclude_dirnames,
         )
+        save_config(AppConfig(last_archive_root=str(self.settings.archive_root)))
 
         await self._run_discovery()
         await self._run_scan()

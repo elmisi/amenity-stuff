@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .app import ArchiverApp
+from .config import load_config
 from .settings import Settings
 
 
@@ -39,9 +40,14 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
+    cfg = load_config()
+    default_source = args.source
+    default_archive = args.archive
+    if default_archive == Path("./ARCHIVIO") and cfg.last_archive_root:
+        default_archive = Path(cfg.last_archive_root)
     settings = Settings(
-        source_root=args.source,
-        archive_root=args.archive,
+        source_root=default_source,
+        archive_root=default_archive,
         max_files=args.max_files,
         localai_base_url=args.localai_base_url,
     )
