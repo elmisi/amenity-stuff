@@ -6,6 +6,7 @@ from pathlib import Path
 from .app import ArchiverApp
 from .config import load_config
 from .settings import Settings
+from .taxonomy import DEFAULT_TAXONOMY_LINES
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -45,11 +46,14 @@ def main() -> None:
     default_archive = args.archive
     if default_archive == Path("./ARCHIVIO") and cfg.last_archive_root:
         default_archive = Path(cfg.last_archive_root)
+    taxonomy_lines = cfg.taxonomy_lines or DEFAULT_TAXONOMY_LINES
     settings = Settings(
         source_root=default_source,
         archive_root=default_archive,
         max_files=args.max_files,
         localai_base_url=args.localai_base_url,
+        output_language=cfg.output_language,
+        taxonomy_lines=taxonomy_lines,
     )
     # Disable mouse tracking so the terminal can do native text selection (copy with mouse).
     ArchiverApp(settings).run(mouse=False)

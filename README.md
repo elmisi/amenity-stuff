@@ -14,6 +14,17 @@ python3 -m venv .venv
 amenity-stuff
 ```
 
+## Settings
+
+You can change:
+- output language for `summary` / `proposed name` (`auto`, `it`, `en`)
+- taxonomy (the allowed categories)
+
+Press `F2` in the TUI to open Settings. Configuration is stored in `~/.config/amenity-stuff/config.json`.
+
+Taxonomy format (one per line):
+`name | description | examples` (examples are optional, separated by `;`).
+
 ## Security & Privacy
 - Local-first: the goal is to avoid sending content to external services.
 - Files are read and analyzed locally; when OCR is enabled, text is extracted from scans/images too.
@@ -46,12 +57,14 @@ The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the se
 - `s` rescan
 - `a` analyze `pending` files (LLM)
 - `c` stop analysis (you can restart with `a`)
-- `enter/space` pin/unpin the details panel (below the table)
 - `A` force reanalyze all (reset + clear cache)
 - `R` force reanalyze selected row
+- `F2` settings
 - `q` or `ctrl+c` quit
 
 During `a`, status transitions to `analysis` and the UI remains interactive while results update row by row.
+
+Mouse text selection is supported (so you can select/copy fields like absolute paths).
 
 ### Status
 The `Status` column includes a marker:
@@ -60,3 +73,9 @@ The `Status` column includes a marker:
 - `✓ ready` proposal available
 - `↷ skipped` not classifiable / low confidence
 - `× error` I/O or Ollama error
+
+### Cache (MVP)
+
+Results are cached in `<source>/.amenity-stuff/cache.json` and reused on re-scan.
+- `R` invalidates cache for the selected file
+- `A` clears the cache for the whole batch

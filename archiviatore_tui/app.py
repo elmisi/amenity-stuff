@@ -14,7 +14,9 @@ from .config import AppConfig, save_config
 from .discovery import DiscoveryResult, discover_providers
 from .scanner import ScanItem, scan_files
 from .settings import Settings
+from .settings_screen import SettingsResult, SettingsScreen
 from .setup_screen import SetupResult, SetupScreen
+from .taxonomy import parse_taxonomy_lines
 
 
 class ArchiverApp(App):
@@ -35,6 +37,7 @@ class ArchiverApp(App):
         ("c", "cancel_analysis", "Stop analysis"),
         ("R", "reanalyze_row", "Reanalyze row"),
         ("A", "reanalyze_all", "Reanalyze all"),
+        ("f2", "settings", "Settings"),
     ]
 
     def __init__(self, settings: Settings) -> None:
@@ -55,6 +58,7 @@ class ArchiverApp(App):
                 yield Static(f"Source: {self.settings.source_root}", id="src")
                 yield Static(f"Archive: {self.settings.archive_root}", id="arc")
                 yield Static(f"Max files: {self.settings.max_files}", id="max")
+                yield Static(f"Lang: {self.settings.output_language}", id="lang")
             yield Static("Ready.", id="notes")
 
         files = DataTable(id="files")
@@ -92,8 +96,19 @@ class ArchiverApp(App):
             recursive=self.settings.recursive,
             include_extensions=self.settings.include_extensions,
             exclude_dirnames=self.settings.exclude_dirnames,
+            output_language=self.settings.output_language,
+            taxonomy_lines=self.settings.taxonomy_lines,
         )
-        save_config(AppConfig(last_archive_root=str(self.settings.archive_root)))
+        save_config(
+            AppConfig(
+                last_archive_root=str(self.settings.archive_root),
+                last_source_root=str(self.settings.source_root),
+                output_language=self.settings.output_language,
+                taxonomy_lines=self.settings.taxonomy_lines,
+            )
+        )
+        self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
+        self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
         self._cache = CacheStore(self.settings.source_root)
         self._cache.load()
 
@@ -169,6 +184,35 @@ class ArchiverApp(App):
         ]
         self._render_files()
         self._update_details_from_cursor()
+        self._render_notes()
+
+    async def action_settings(self) -> None:
+        if self._analysis_running:
+            return
+        self.push_screen(
+            SettingsScreen(
+                output_language=self.settings.output_language,
+                taxonomy_lines=self.settings.taxonomy_lines,
+            ),
+            callback=self._on_settings_done,
+            wait_for_dismiss=False,
+        )
+
+    def _on_settings_done(self, result: SettingsResult) -> None:
+        self.settings = replace(
+            self.settings,
+            output_language=result.output_language,
+            taxonomy_lines=result.taxonomy_lines,
+        )
+        self.query_one("#lang", Static).update(f"Lang: {self.settings.output_language}")
+        save_config(
+            AppConfig(
+                last_archive_root=str(self.settings.archive_root),
+                last_source_root=str(self.settings.source_root),
+                output_language=self.settings.output_language,
+                taxonomy_lines=self.settings.taxonomy_lines,
+            )
+        )
         self._render_notes()
 
     async def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -281,7 +325,11 @@ class ArchiverApp(App):
             self._render_notes()
 
         def do_analyze_background() -> None:
-            cfg = AnalysisConfig()
+            taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+            cfg = AnalysisConfig(
+                output_language=self.settings.output_language,
+                taxonomy=taxonomy,
+            )
             worker = get_current_worker()
             for it in list(self._scan_items):
                 if worker.is_cancelled:

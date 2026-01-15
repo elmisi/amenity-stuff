@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .taxonomy import DEFAULT_TAXONOMY_LINES
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -14,4 +16,5 @@ class Settings:
     recursive: bool = True
     include_extensions: tuple[str, ...] = ("pdf", "jpg", "jpeg")
     exclude_dirnames: tuple[str, ...] = (".git", ".venv", "ARCHIVIO")
-
+    output_language: str = "auto"  # auto | it | en
+    taxonomy_lines: tuple[str, ...] = DEFAULT_TAXONOMY_LINES

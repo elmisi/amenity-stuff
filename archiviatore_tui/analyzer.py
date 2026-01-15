@@ -9,19 +9,9 @@ from typing import Optional
 from .ollama_client import generate, generate_with_image_file
 from .pdf_extract import extract_pdf_text_with_reason
 from .scanner import ScanItem
+from .taxonomy import DEFAULT_TAXONOMY_LINES, Taxonomy, parse_taxonomy_lines, taxonomy_to_prompt_block
 
-
-_ALLOWED_CATEGORIES = (
-    "finance",
-    "legal",
-    "work",
-    "personal",
-    "medical",
-    "education",
-    "media",
-    "technical",
-    "unknown",
-)
+_DEFAULT_TAXONOMY, _ = parse_taxonomy_lines(DEFAULT_TAXONOMY_LINES)
 
 
 @dataclass(frozen=True)
@@ -29,6 +19,8 @@ class AnalysisConfig:
     text_model: str = "qwen2.5:7b-instruct"
     vision_model: str = "moondream:latest"
     ollama_base_url: str = "http://localhost:11434"
+    output_language: str = "auto"  # auto | it | en
+    taxonomy: Taxonomy = _DEFAULT_TAXONOMY
 
 
 @dataclass(frozen=True)
@@ -260,15 +252,27 @@ def _classify_from_text(
     base_url: str,
     reference_year_hint: Optional[str],
     category_hint: Optional[str],
+    output_language: str,
+    taxonomy: Taxonomy,
 ) -> AnalysisResult:
     year_hint_line = f"reference_year_hint: {reference_year_hint}" if reference_year_hint else "reference_year_hint: null"
     category_hint_line = f"category_hint: {category_hint}" if category_hint else "category_hint: null"
+    categories = taxonomy.allowed_names
+    taxonomy_block = taxonomy_to_prompt_block(taxonomy)
+    if output_language == "it":
+        language_line = "Output language: Italian"
+    elif output_language == "en":
+        language_line = "Output language: English"
+    else:
+        language_line = "Output language: match the input document language (if unclear: English)"
     prompt = f"""
 You are a document archiving assistant. Reply with VALID JSON only (no extra text).
 
 Goal:
 - understand what the document is about
-- choose a category from: {list(_ALLOWED_CATEGORIES)}
+- choose a category from: {list(categories)}
+- taxonomy (meaning + examples):
+{taxonomy_block}
 - if category_hint is present, you may use it unless the content clearly indicates a different category
 - estimate the reference year (reference_year) the document refers to
 - estimate the production year (production_year) (if unknown: null)
@@ -277,6 +281,7 @@ Goal:
   - include key entities (company/person), document type, and month/period if present
   - do NOT include category/year unless there is no other useful info
   - keep it readable (avoid random IDs)
+- {language_line}
 - if unsure, set low confidence and provide skip_reason
 - if reference_year_hint is present, use it ONLY if the content doesn't clearly contradict it
 
@@ -315,7 +320,7 @@ Output JSON schema:
         return AnalysisResult(status="skipped", reason=skip_reason.strip())
 
     category = data.get("category")
-    if not isinstance(category, str) or category not in _ALLOWED_CATEGORIES:
+    if not isinstance(category, str) or category not in categories:
         category = "unknown"
 
     reference_year = data.get("reference_year")
@@ -348,7 +353,7 @@ Output JSON schema:
         proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename)
 
     # If category is unknown, fall back to hint.
-    if category == "unknown" and category_hint in _ALLOWED_CATEGORIES:
+    if category == "unknown" and category_hint in categories:
         category = category_hint
 
     # If the model didn't provide a usable year, fall back to filename/path hint.
@@ -417,6 +422,8 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             base_url=config.ollama_base_url,
             reference_year_hint=effective_year_hint,
             category_hint=category_hint,
+            output_language=config.output_language,
+            taxonomy=config.taxonomy,
         )
         if res.status == "skipped":
             return replace(
@@ -430,7 +437,10 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
     if item.kind == "image":
         effective_year_hint = filename_year_hint
         category_hint = _category_hint_from_signals(path=path, text=None)
-        caption_prompt = "Describe this image in one sentence."
+        if config.output_language == "it":
+            caption_prompt = "Describe this image in one sentence in Italian."
+        else:
+            caption_prompt = "Describe this image in one sentence in English."
         try:
             cap = generate_with_image_file(
                 model=config.vision_model,
@@ -454,6 +464,8 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             base_url=config.ollama_base_url,
             reference_year_hint=effective_year_hint,
             category_hint=category_hint,
+            output_language=config.output_language,
+            taxonomy=config.taxonomy,
         )
         if res.status == "skipped":
             return replace(
