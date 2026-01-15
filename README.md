@@ -23,6 +23,14 @@ amenity-stuff
 - Parsing and OCR are best-effort: some files may be `skipped` or produce incomplete output.
 - The “approve and move” phase is not implemented yet (proposal/preview only).
 
+## Optional System Dependencies
+
+### OCR for scanned PDFs (recommended)
+If a PDF has no extractable text (i.e. it's effectively an image), amenity-stuff can use Tesseract OCR.
+
+- Ubuntu / Linux Mint:
+  - `sudo apt-get install tesseract-ocr tesseract-ocr-ita`
+
 ## LLM Provider
 
 On startup the app tries to detect:
