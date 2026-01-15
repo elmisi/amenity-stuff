@@ -9,6 +9,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
 
 from .analyzer import AnalysisConfig, analyze_item
+from .cache import CacheStore
 from .config import AppConfig, save_config
 from .discovery import DiscoveryResult, discover_providers
 from .scanner import ScanItem, scan_files
@@ -66,6 +67,7 @@ class ArchiverApp(App):
         self._analysis_worker = None
         self._analysis_cancel_requested: bool = False
         self._details_pinned: bool = False
+        self._cache: CacheStore | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -109,6 +111,8 @@ class ArchiverApp(App):
             exclude_dirnames=self.settings.exclude_dirnames,
         )
         save_config(AppConfig(last_archive_root=str(self.settings.archive_root)))
+        self._cache = CacheStore(self.settings.source_root)
+        self._cache.load()
 
         await self._run_discovery()
         await self._run_scan()
@@ -178,6 +182,21 @@ class ArchiverApp(App):
 
         worker = self.run_worker(do_scan, thread=True)
         self._scan_items = await worker.wait()
+        if self._cache:
+            for idx, it in enumerate(list(self._scan_items)):
+                cached = self._cache.get_matching(it)
+                if not cached:
+                    continue
+                self._scan_items[idx] = replace(
+                    it,
+                    status=cached.status,
+                    reason=cached.reason,
+                    category=cached.category,
+                    reference_year=cached.reference_year,
+                    proposed_name=cached.proposed_name,
+                    summary=cached.summary,
+                    confidence=cached.confidence if isinstance(cached.confidence, (int, float)) else None,
+                )
         self._render_files()
         self._render_notes()
         self._update_details_from_cursor()
@@ -216,6 +235,9 @@ class ArchiverApp(App):
             files.update_cell(path_str, "reason", new_item.reason or "")
             if not self._details_pinned and files.cursor_row == idx:
                 self._update_details(idx)
+            if self._cache:
+                self._cache.upsert(new_item)
+                self._cache.save()
 
         def finish(cancelled: bool) -> None:
             if cancelled:
