@@ -39,6 +39,8 @@ La tabella elenca (fino a `--max-files`) i file `pdf` e `jpg/jpeg` trovati nella
 - `a` per avviare l’analisi (LLM) dei file in `pending`
 - `c` per stoppare l’analisi (poi puoi ripartire con `a`)
 - `invio/spazio` per bloccare/sbloccare il pannello dettagli (mostrato sotto la tabella)
+- `A` per forzare rianalisi di tutti i file (reset + svuota cache)
+- `R` per forzare rianalisi della riga selezionata
 - `q` o `ctrl+c` per uscire
 
 Durante `a`, lo stato passa a `analysis` e la TUI resta utilizzabile mentre i risultati arrivano riga per riga.
