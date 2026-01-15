@@ -73,6 +73,13 @@ def _extract_year_hint_from_path(path: Path) -> Optional[str]:
     if m:
         return m.group(1)
 
+    # Dates like dd-mm-yy / dd.mm.yy (2-digit year). Use a conservative pivot.
+    m = re.search(r"(?<!\d)\d{1,2}[._-]\d{1,2}[._-](\d{2})(?!\d)", text)
+    if m:
+        yy = int(m.group(1))
+        # 00-69 -> 2000-2069, 70-99 -> 1970-1999
+        return str(2000 + yy) if yy <= 69 else str(1900 + yy)
+
     # ISO date yyyy-mm-dd.
     m = re.search(r"(?<!\d)(19\d{2}|20\d{2})-\d{1,2}-\d{1,2}(?!\d)", text)
     if m:
@@ -89,6 +96,20 @@ def _extract_year_hint_from_path(path: Path) -> Optional[str]:
         return m.group(1)
 
     return None
+
+
+def _extract_year_hint_from_text(text: str) -> Optional[str]:
+    # Keep it cheap and stable: first part of the document only.
+    sample = text[:8000]
+    years = re.findall(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", sample)
+    if not years:
+        return None
+    counts: dict[str, int] = {}
+    for y in years:
+        counts[y] = counts.get(y, 0) + 1
+    # Prefer most frequent; tie-breaker: latest year.
+    best = sorted(counts.items(), key=lambda kv: (kv[1], kv[0]))[-1][0]
+    return best
 
 
 def _extract_json(text: str) -> Optional[dict]:
@@ -293,6 +314,12 @@ Output JSON schema:
     if (not reference_year) and hint:
         reference_year = hint
 
+    # If still missing, allow using a year embedded in the proposed name.
+    if not reference_year:
+        year_from_name = _extract_year_hint_from_path(Path(proposed_name))
+        if year_from_name and _is_year(year_from_name):
+            reference_year = year_from_name
+
     # If both exist but differ, trust content only when confidence is sufficiently high.
     if reference_year and hint and reference_year != hint:
         if conf is None or conf < 0.6:
@@ -313,9 +340,18 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
     if item.status != "pending":
         return AnalysisResult(status=item.status, reason=item.reason)
 
-    year_hint = _extract_year_hint_from_path(path)
+    filename_year_hint = _extract_year_hint_from_path(path)
 
     def skipped(reason: str) -> AnalysisResult:
+        return AnalysisResult(
+            status="skipped",
+            reason=reason,
+            category="unknown",
+            reference_year=filename_year_hint,
+            proposed_name=path.name,
+        )
+
+    def skipped_with_year(reason: str, year_hint: Optional[str]) -> AnalysisResult:
         return AnalysisResult(
             status="skipped",
             reason=reason,
@@ -328,19 +364,27 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
         text, reason = extract_pdf_text_with_reason(path)
         if not text:
             return skipped(reason or "No extractable PDF text")
+        content_year_hint = _extract_year_hint_from_text(text)
+        effective_year_hint = filename_year_hint or content_year_hint
         res = _classify_from_text(
             model=config.text_model,
             content=text,
             filename=path.name,
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
-            reference_year_hint=year_hint,
+            reference_year_hint=effective_year_hint,
         )
         if res.status == "skipped":
-            return replace(res, category="unknown", reference_year=res.reference_year or year_hint, proposed_name=path.name)
+            return replace(
+                res,
+                category="unknown",
+                reference_year=res.reference_year or effective_year_hint,
+                proposed_name=path.name,
+            )
         return res
 
     if item.kind == "image":
+        effective_year_hint = filename_year_hint
         caption_prompt = "Describe this image in one sentence."
         try:
             cap = generate_with_image_file(
@@ -356,17 +400,22 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             return AnalysisResult(status="error", reason=f"Ollama vision errore: {cap.error}")
         caption = cap.response.strip()
         if not caption:
-            return skipped("Empty caption")
+            return skipped_with_year("Empty caption", effective_year_hint)
         res = _classify_from_text(
             model=config.text_model,
             content=f"IMAGE_CAPTION: {caption}",
             filename=path.name,
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
-            reference_year_hint=year_hint,
+            reference_year_hint=effective_year_hint,
         )
         if res.status == "skipped":
-            return replace(res, category="unknown", reference_year=res.reference_year or year_hint, proposed_name=path.name)
+            return replace(
+                res,
+                category="unknown",
+                reference_year=res.reference_year or effective_year_hint,
+                proposed_name=path.name,
+            )
         return res
 
-    return skipped("Unsupported file type")
+    return skipped_with_year("Unsupported file type", filename_year_hint)

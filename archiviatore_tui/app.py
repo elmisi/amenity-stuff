@@ -144,6 +144,7 @@ class ArchiverApp(App):
             self._cache.invalidate(item)
             self._cache.save()
         self._render_files()
+        self.query_one("#files", DataTable).move_cursor(row=row_index, column=0, scroll=True)
         self._update_details_from_cursor()
         self._render_notes()
 
@@ -307,6 +308,7 @@ class ArchiverApp(App):
 
     def _render_files(self) -> None:
         files = self.query_one("#files", DataTable)
+        prev_row = files.cursor_row
         files.clear()
         self._scan_index_by_path.clear()
 
@@ -324,7 +326,10 @@ class ArchiverApp(App):
             files.add_row(_status_cell(item.status), item.kind, rel, cat, year, name, item.reason or "", key=key)
 
         if files.row_count:
-            files.move_cursor(row=0, column=0, scroll=False)
+            if prev_row < 0 or prev_row >= files.row_count:
+                files.move_cursor(row=0, column=0, scroll=False)
+            else:
+                files.move_cursor(row=prev_row, column=0, scroll=False)
 
     def _update_details_from_cursor(self) -> None:
         table = self.query_one("#files", DataTable)

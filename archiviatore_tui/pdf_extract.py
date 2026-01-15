@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import subprocess
+import tempfile
 from typing import Optional, Tuple
 
 
@@ -11,34 +13,72 @@ def extract_pdf_text(path: Path, *, max_chars: int = 15000) -> Optional[str]:
 
 
 def extract_pdf_text_with_reason(path: Path, *, max_chars: int = 15000) -> Tuple[Optional[str], Optional[str]]:
+    # 1) pypdf extraction (if available)
+    joined = ""
     try:
         from pypdf import PdfReader
-    except Exception:
-        return None, "Missing dependency: pypdf"
 
-    try:
-        reader = PdfReader(str(path))
-    except Exception:
-        return None, "Failed to open PDF"
-
-    parts: list[str] = []
-    for page in reader.pages[:50]:
         try:
-            text = page.extract_text() or ""
+            reader = PdfReader(str(path))
+            parts: list[str] = []
+            for page in reader.pages[:50]:
+                try:
+                    text = page.extract_text() or ""
+                except Exception:
+                    text = ""
+                if text.strip():
+                    parts.append(text.strip())
+                if sum(len(p) for p in parts) >= max_chars:
+                    break
+            joined = "\n\n".join(parts).strip()
         except Exception:
-            text = ""
-        if text.strip():
-            parts.append(text.strip())
-        if sum(len(p) for p in parts) >= max_chars:
-            break
+            joined = ""
+    except Exception:
+        joined = ""
 
-    joined = "\n\n".join(parts).strip()
-    if not joined:
-        ocr_text = _extract_pdf_text_ocr(path, max_chars=max_chars)
-        if not ocr_text:
-            return None, "No extractable text and OCR not available"
-        return ocr_text, "ocr"
-    return joined[:max_chars], "text"
+    if joined:
+        return joined[:max_chars], "text"
+
+    # 2) poppler pdftotext (often better on some PDFs)
+    poppler_text = _extract_pdf_text_pdftotext(path, max_chars=max_chars)
+    if poppler_text:
+        return poppler_text, "pdftotext"
+
+    # 3) OCR fallback
+    ocr_text = _extract_pdf_text_ocr(path, max_chars=max_chars)
+    if not ocr_text:
+        return None, "No extractable text (enable OCR with system tesseract)"
+    return ocr_text, "ocr"
+
+
+def _extract_pdf_text_pdftotext(path: Path, *, max_chars: int) -> Optional[str]:
+    if not shutil.which("pdftotext"):
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            proc = subprocess.run(
+                ["pdftotext", str(path), str(tmp_path)],
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+            if proc.returncode != 0:
+                return None
+            text = tmp_path.read_text(encoding="utf-8", errors="ignore")
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception:
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    return text[:max_chars]
 
 
 def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
