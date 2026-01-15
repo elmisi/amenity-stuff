@@ -5,7 +5,6 @@ from dataclasses import replace
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
-from textual.message import Message
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
 
@@ -16,28 +15,6 @@ from .discovery import DiscoveryResult, discover_providers
 from .scanner import ScanItem, scan_files
 from .settings import Settings
 from .setup_screen import SetupResult, SetupScreen
-
-
-class ToggleDetailsPin(Message):
-    def __init__(self, row_index: int) -> None:
-        super().__init__()
-        self.row_index = row_index
-
-
-class FilesTable(DataTable):
-    BINDINGS = [
-        ("enter", "toggle_pin", "Pin details"),
-        ("space", "toggle_pin", "Pin details"),
-    ]
-
-    def key_enter(self) -> None:
-        self.post_message(ToggleDetailsPin(self.cursor_row))
-
-    def key_space(self) -> None:
-        self.post_message(ToggleDetailsPin(self.cursor_row))
-
-    def action_toggle_pin(self) -> None:
-        self.post_message(ToggleDetailsPin(self.cursor_row))
 
 
 class ArchiverApp(App):
@@ -69,7 +46,6 @@ class ArchiverApp(App):
         self._analysis_running: bool = False
         self._analysis_worker = None
         self._analysis_cancel_requested: bool = False
-        self._details_pinned: bool = False
         self._cache: CacheStore | None = None
 
     def compose(self) -> ComposeResult:
@@ -81,8 +57,8 @@ class ArchiverApp(App):
                 yield Static(f"Max files: {self.settings.max_files}", id="max")
             yield Static("Ready.", id="notes")
 
-        files = FilesTable(id="files")
-        files.add_column("Status", key="status")
+        files = DataTable(id="files")
+        files.add_column("Status", key="status", width=10)
         files.add_column("Type", key="kind")
         files.add_column("File", key="file")
         files.add_column("Category", key="category")
@@ -194,21 +170,13 @@ class ArchiverApp(App):
         self._update_details_from_cursor()
         self._render_notes()
 
-    async def on_toggle_details_pin(self, message: ToggleDetailsPin) -> None:
-        self._details_pinned = not self._details_pinned
-        self._update_details(message.row_index)
-
     async def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "files":
-            return
-        if self._details_pinned:
             return
         self._update_details(event.cursor_row)
 
     async def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
         if event.data_table.id != "files":
-            return
-        if self._details_pinned:
             return
         self._update_details(event.coordinate.row)
 
@@ -279,7 +247,7 @@ class ArchiverApp(App):
             self._scan_items[idx] = replace(it, status="analysis", reason=None)
             files.update_cell(path_str, "status", _status_cell("analysis"))
             files.update_cell(path_str, "reason", "")
-            if not self._details_pinned and files.cursor_row == idx:
+            if files.cursor_row == idx:
                 self._update_details(idx)
 
         def apply_result(path_str: str, new_item: ScanItem) -> None:
@@ -292,7 +260,7 @@ class ArchiverApp(App):
             files.update_cell(path_str, "year", new_item.reference_year or "")
             files.update_cell(path_str, "name", new_item.proposed_name or "")
             files.update_cell(path_str, "reason", new_item.reason or "")
-            if not self._details_pinned and files.cursor_row == idx:
+            if files.cursor_row == idx:
                 self._update_details(idx)
             if self._cache:
                 self._cache.upsert(new_item)
@@ -422,8 +390,6 @@ class ArchiverApp(App):
             parts.append(
                 f"Files: {len(self._scan_items)} (pending={pending}, analysis={analysis}, ready={ready}, skipped={skipped}, error={err})"
             )
-        if self._details_pinned:
-            parts.append("Details: pinned (press Enter/Space to unpin).")
         if not parts:
             parts = ["No notes."]
         self.query_one("#notes", Static).update(" ".join(parts))

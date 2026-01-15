@@ -15,6 +15,11 @@ class SetupResult:
     archive_root: Path
 
 
+class DirectoriesOnlyTree(DirectoryTree):
+    def filter_paths(self, paths):  # type: ignore[override]
+        return [p for p in paths if p.is_dir()]
+
+
 class SetupScreen(ModalScreen[SetupResult]):
     CSS = """
     SetupScreen { layout: vertical; }
@@ -41,7 +46,7 @@ class SetupScreen(ModalScreen[SetupResult]):
         yield Header()
         with Container(id="summary"):
             yield Static(self._render_summary(), id="summary_text")
-        yield DirectoryTree(path=Path.home(), id="picker")
+        yield DirectoriesOnlyTree(path=Path.home(), id="picker")
         yield Static(self._render_help(), id="help")
         yield Footer()
 

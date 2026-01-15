@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
@@ -224,11 +224,20 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
 
     year_hint = _extract_year_hint_from_path(path)
 
+    def skipped(reason: str) -> AnalysisResult:
+        return AnalysisResult(
+            status="skipped",
+            reason=reason,
+            category="unknown",
+            reference_year=year_hint,
+            proposed_name=path.name,
+        )
+
     if item.kind == "pdf":
         text, reason = extract_pdf_text_with_reason(path)
         if not text:
-            return AnalysisResult(status="skipped", reason=reason or "No extractable PDF text")
-        return _classify_from_text(
+            return skipped(reason or "No extractable PDF text")
+        res = _classify_from_text(
             model=config.text_model,
             content=text,
             filename=path.name,
@@ -236,6 +245,9 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             base_url=config.ollama_base_url,
             reference_year_hint=year_hint,
         )
+        if res.status == "skipped":
+            return replace(res, category="unknown", reference_year=res.reference_year or year_hint, proposed_name=path.name)
+        return res
 
     if item.kind == "image":
         caption_prompt = "Describe this image in one sentence."
@@ -253,8 +265,8 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             return AnalysisResult(status="error", reason=f"Ollama vision errore: {cap.error}")
         caption = cap.response.strip()
         if not caption:
-            return AnalysisResult(status="skipped", reason="Caption vuota")
-        return _classify_from_text(
+            return skipped("Empty caption")
+        res = _classify_from_text(
             model=config.text_model,
             content=f"IMAGE_CAPTION: {caption}",
             filename=path.name,
@@ -262,5 +274,8 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             base_url=config.ollama_base_url,
             reference_year_hint=year_hint,
         )
+        if res.status == "skipped":
+            return replace(res, category="unknown", reference_year=res.reference_year or year_hint, proposed_name=path.name)
+        return res
 
-    return AnalysisResult(status="skipped", reason="Tipo non supportato")
+    return skipped("Unsupported file type")
