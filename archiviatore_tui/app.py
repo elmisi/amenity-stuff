@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
 from textual.app import App, ComposeResult
@@ -100,9 +101,13 @@ class ArchiverApp(App):
     async def on_mount(self) -> None:
         initial_source = self.settings.source_root.expanduser().resolve()
         initial_archive = self.settings.archive_root.expanduser().resolve()
-        setup: SetupResult = await self.push_screen_wait(
-            SetupScreen(source_root=initial_source, archive_root=initial_archive)
+        self.push_screen(
+            SetupScreen(source_root=initial_source, archive_root=initial_archive),
+            callback=self._on_setup_done,
+            wait_for_dismiss=False,
         )
+
+    def _on_setup_done(self, setup: SetupResult) -> None:
         self.settings = Settings(
             source_root=setup.source_root,
             archive_root=setup.archive_root,
@@ -116,6 +121,9 @@ class ArchiverApp(App):
         self._cache = CacheStore(self.settings.source_root)
         self._cache.load()
 
+        asyncio.create_task(self._post_setup())
+
+    async def _post_setup(self) -> None:
         await self._run_discovery()
         await self._run_scan()
         self.query_one("#files", DataTable).focus()
