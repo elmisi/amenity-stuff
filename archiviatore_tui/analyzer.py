@@ -42,6 +42,55 @@ class AnalysisResult:
     confidence: Optional[float] = None
 
 
+def _is_year(value: str) -> bool:
+    return bool(re.fullmatch(r"(19\d{2}|20\d{2})", value))
+
+
+def _extract_year_hint_from_path(path: Path) -> Optional[str]:
+    """Best-effort year extraction from filename/path.
+
+    Examples it should catch:
+    - 2021/...
+    - ..._12.2019_...
+    - 17.03.2020
+    - 20200105_101112
+    """
+
+    text = " ".join([*path.parts, path.name])
+
+    # Prefer a directory or token that is exactly a year.
+    for part in reversed(path.parts):
+        if _is_year(part):
+            return part
+
+    # Month-year like mm.yyyy or mm-yyyy or mm_yyyy.
+    m = re.search(r"(?<!\d)\d{1,2}[._-](19\d{2}|20\d{2})(?!\d)", text)
+    if m:
+        return m.group(1)
+
+    # Dates like dd.mm.yyyy or dd-mm-yyyy or dd_mm_yyyy.
+    m = re.search(r"(?<!\d)\d{1,2}[._-]\d{1,2}[._-](19\d{2}|20\d{2})(?!\d)", text)
+    if m:
+        return m.group(1)
+
+    # ISO date yyyy-mm-dd.
+    m = re.search(r"(?<!\d)(19\d{2}|20\d{2})-\d{1,2}-\d{1,2}(?!\d)", text)
+    if m:
+        return m.group(1)
+
+    # Timestamps like yyyymmdd or yyyymmdd_hhmmss.
+    m = re.search(r"(?<!\d)(19\d{2}|20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?!\d)", text)
+    if m:
+        return m.group(1)
+
+    # Last resort: any year occurrence.
+    m = re.search(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
+    if m:
+        return m.group(1)
+
+    return None
+
+
 def _extract_json(text: str) -> Optional[dict]:
     text = text.strip()
     if not text:
@@ -73,7 +122,9 @@ def _classify_from_text(
     filename: str,
     mtime_iso: str,
     base_url: str,
+    reference_year_hint: Optional[str],
 ) -> AnalysisResult:
+    year_hint_line = f"reference_year_hint: {reference_year_hint}" if reference_year_hint else "reference_year_hint: null"
     prompt = f"""
 You are a document archiving assistant. Reply with VALID JSON only (no extra text).
 
@@ -84,10 +135,12 @@ Goal:
 - estimate the production year (production_year) (if unknown: null)
 - propose a descriptive file name (proposed_name) WITHOUT category/year unless necessary
 - if unsure, set low confidence and provide skip_reason
+- if reference_year_hint is present, use it ONLY if the content doesn't clearly contradict it
 
 Input:
 filename: {filename}
 mtime_iso: {mtime_iso}
+{year_hint_line}
 content:
 \"\"\"{content}\"\"\"
 
@@ -124,6 +177,8 @@ Output JSON schema:
     reference_year = data.get("reference_year")
     if reference_year is not None and not isinstance(reference_year, str):
         reference_year = None
+    if isinstance(reference_year, str) and not _is_year(reference_year.strip()):
+        reference_year = None
 
     proposed_name = data.get("proposed_name")
     if not isinstance(proposed_name, str) or not proposed_name.strip():
@@ -142,6 +197,16 @@ Output JSON schema:
     if conf is not None and conf < 0.35:
         return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf)
 
+    # If the model didn't provide a usable year, fall back to filename/path hint.
+    hint = reference_year_hint if (reference_year_hint and _is_year(reference_year_hint)) else None
+    if (not reference_year) and hint:
+        reference_year = hint
+
+    # If both exist but differ, trust content only when confidence is sufficiently high.
+    if reference_year and hint and reference_year != hint:
+        if conf is None or conf < 0.6:
+            reference_year = hint
+
     return AnalysisResult(
         status="ready",
         category=category,
@@ -157,16 +222,19 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
     if item.status != "pending":
         return AnalysisResult(status=item.status, reason=item.reason)
 
+    year_hint = _extract_year_hint_from_path(path)
+
     if item.kind == "pdf":
         text, reason = extract_pdf_text_with_reason(path)
         if not text:
-            return AnalysisResult(status="skipped", reason=reason or "PDF senza testo estraibile")
+            return AnalysisResult(status="skipped", reason=reason or "No extractable PDF text")
         return _classify_from_text(
             model=config.text_model,
             content=text,
             filename=path.name,
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
+            reference_year_hint=year_hint,
         )
 
     if item.kind == "image":
@@ -192,6 +260,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             filename=path.name,
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
+            reference_year_hint=year_hint,
         )
 
     return AnalysisResult(status="skipped", reason="Tipo non supportato")
