@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .ollama_client import generate, generate_with_image_file
-from .pdf_extract import extract_pdf_text
+from .pdf_extract import extract_pdf_text_with_reason
 from .scanner import ScanItem
 
 
@@ -158,9 +158,9 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
         return AnalysisResult(status=item.status, reason=item.reason)
 
     if item.kind == "pdf":
-        text = extract_pdf_text(path)
+        text, reason = extract_pdf_text_with_reason(path)
         if not text:
-            return AnalysisResult(status="skipped", reason="PDF senza testo estraibile (OCR non attivo)")
+            return AnalysisResult(status="skipped", reason=reason or "PDF senza testo estraibile")
         return _classify_from_text(
             model=config.text_model,
             content=text,

@@ -13,6 +13,9 @@ authors = [{name = "amenity-stuff contributors"}]
 dependencies = [
   "textual>=0.60,<1",
   "pypdf>=4,<6",
+  "pymupdf>=1.24,<2",
+  "pytesseract>=0.3,<1",
+  "Pillow>=10,<12",
 ]
 
 [project.urls]
@@ -23,4 +26,3 @@ amenity-stuff = "archiviatore_tui.__main__:main"
 
 [tool.setuptools]
 packages = ["archiviatore_tui"]
-
