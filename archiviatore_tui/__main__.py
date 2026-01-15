@@ -51,7 +51,8 @@ def main() -> None:
         max_files=args.max_files,
         localai_base_url=args.localai_base_url,
     )
-    ArchiverApp(settings).run()
+    # Disable mouse tracking so the terminal can do native text selection (copy with mouse).
+    ArchiverApp(settings).run(mouse=False)
 
 
 if __name__ == "__main__":
