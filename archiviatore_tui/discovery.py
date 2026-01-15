@@ -39,7 +39,7 @@ def _run(cmd: list[str], timeout_s: float = 2.5) -> subprocess.CompletedProcess[
 def _discover_ollama() -> ProviderInfo:
     path = shutil.which("ollama")
     if not path:
-        return ProviderInfo(name="ollama", available=False, details="Non trovato in PATH")
+        return ProviderInfo(name="ollama", available=False, details="Not found in PATH")
 
     proc = _run(["ollama", "list"], timeout_s=3.5)
     if proc.returncode != 0:
@@ -55,7 +55,7 @@ def _discover_ollama() -> ProviderInfo:
 
     details = "OK"
     if not models:
-        details = "OK (nessun modello elencato)"
+        details = "OK (no models listed)"
 
     return ProviderInfo(
         name="ollama",
@@ -78,14 +78,14 @@ def discover_providers(*, localai_base_url: Optional[str] = None) -> DiscoveryRe
     if gguf_dir.is_dir():
         ggufs = list(gguf_dir.glob("*.gguf"))
         if ggufs:
-            notes.append(f"Trovati {len(ggufs)} modelli GGUF in {gguf_dir}.")
+            notes.append(f"Found {len(ggufs)} GGUF models in {gguf_dir}.")
 
     chosen_text = None
     chosen_vision = None
     if ollama.available and ollama.models:
         chosen_text = "ollama"
     elif ollama.available and not ollama.models:
-        notes.append("Ollama è installato ma non ha modelli: esegui 'ollama pull <modello>'.")
+        notes.append("Ollama is installed but has no models: run 'ollama pull <model>'.")
 
     return DiscoveryResult(
         providers=tuple(providers),

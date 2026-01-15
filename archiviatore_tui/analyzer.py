@@ -75,15 +75,15 @@ def _classify_from_text(
     base_url: str,
 ) -> AnalysisResult:
     prompt = f"""
-Sei un assistente per archiviazione documenti. Devi rispondere SOLO con JSON valido, senza testo extra.
+You are a document archiving assistant. Reply with VALID JSON only (no extra text).
 
-Obiettivo:
-- capire di cosa parla il documento
-- scegliere una categoria tra: {list(_ALLOWED_CATEGORIES)}
-- stimare l'anno di riferimento (reference_year) a cui si riferisce il documento
-- stimare l'anno di produzione (production_year) (se non lo sai: null)
-- proporre un nome file descrittivo (proposed_name) SENZA categoria/anno salvo necessario
-- se non sei sicuro, imposta confidence bassa e metti skip_reason
+Goal:
+- understand what the document is about
+- choose a category from: {list(_ALLOWED_CATEGORIES)}
+- estimate the reference year (reference_year) the document refers to
+- estimate the production year (production_year) (if unknown: null)
+- propose a descriptive file name (proposed_name) WITHOUT category/year unless necessary
+- if unsure, set low confidence and provide skip_reason
 
 Input:
 filename: {filename}
@@ -91,7 +91,7 @@ mtime_iso: {mtime_iso}
 content:
 \"\"\"{content}\"\"\"
 
-Risposta JSON schema:
+Output JSON schema:
 {{
   "summary": string,
   "category": string,
@@ -111,7 +111,7 @@ Risposta JSON schema:
     out = gen.response
     data = _extract_json(out)
     if not isinstance(data, dict):
-        return AnalysisResult(status="skipped", reason="Output non parseabile (JSON)")
+        return AnalysisResult(status="skipped", reason="Unparseable output (JSON)")
 
     skip_reason = data.get("skip_reason")
     if isinstance(skip_reason, str) and skip_reason.strip():
@@ -127,7 +127,7 @@ Risposta JSON schema:
 
     proposed_name = data.get("proposed_name")
     if not isinstance(proposed_name, str) or not proposed_name.strip():
-        return AnalysisResult(status="skipped", reason="Nome proposto mancante")
+        return AnalysisResult(status="skipped", reason="Missing proposed name")
 
     summary = data.get("summary")
     if not isinstance(summary, str):
@@ -140,7 +140,7 @@ Risposta JSON schema:
         conf = None
 
     if conf is not None and conf < 0.35:
-        return AnalysisResult(status="skipped", reason="Confidenza bassa", confidence=conf)
+        return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf)
 
     return AnalysisResult(
         status="ready",

@@ -14,12 +14,12 @@ def extract_pdf_text_with_reason(path: Path, *, max_chars: int = 15000) -> Tuple
     try:
         from pypdf import PdfReader
     except Exception:
-        return None, "Dipendenza pypdf mancante"
+        return None, "Missing dependency: pypdf"
 
     try:
         reader = PdfReader(str(path))
     except Exception:
-        return None, "Impossibile aprire PDF"
+        return None, "Failed to open PDF"
 
     parts: list[str] = []
     for page in reader.pages[:50]:
@@ -36,7 +36,7 @@ def extract_pdf_text_with_reason(path: Path, *, max_chars: int = 15000) -> Tuple
     if not joined:
         ocr_text = _extract_pdf_text_ocr(path, max_chars=max_chars)
         if not ocr_text:
-            return None, "PDF senza testo estraibile e OCR non disponibile"
+            return None, "No extractable text and OCR not available"
         return ocr_text, "ocr"
     return joined[:max_chars], "text"
 

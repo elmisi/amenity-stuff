@@ -25,10 +25,10 @@ class SetupScreen(ModalScreen[SetupResult]):
     """
 
     BINDINGS = [
-        ("q", "cancel", "Annulla"),
-        ("1", "select_source", "Seleziona sorgente"),
-        ("2", "select_archive", "Seleziona archivio"),
-        ("g", "go", "Continua"),
+        ("q", "cancel", "Cancel"),
+        ("1", "select_source", "Select source"),
+        ("2", "select_archive", "Select archive"),
+        ("g", "go", "Continue"),
     ]
 
     def __init__(self, *, source_root: Path, archive_root: Path) -> None:
@@ -75,14 +75,13 @@ class SetupScreen(ModalScreen[SetupResult]):
         self.query_one("#help", Static).update(self._render_help())
 
     def _render_summary(self) -> str:
-        tgt = "SORGENTE" if self._target == "source" else "ARCHIVIO"
+        tgt = "SOURCE" if self._target == "source" else "ARCHIVE"
         return (
-            "Selezione cartelle\n\n"
-            f"Sorgente: {self._source_root}\n"
-            f"Archivio: {self._archive_root}\n\n"
-            f"Selezione attiva: {tgt}"
+            "Folder selection\n\n"
+            f"Source: {self._source_root}\n"
+            f"Archive: {self._archive_root}\n\n"
+            f"Active target: {tgt}"
         )
 
     def _render_help(self) -> str:
-        return "Invio su una cartella: imposta la selezione attiva • 1/2 cambia target • g continua • q annulla"
-
+        return "Enter on a folder: set active target • 1/2 switch target • g continue • q cancel"

@@ -52,7 +52,7 @@ def scan_files(
                 size_bytes=0,
                 mtime_iso="",
                 status="error",
-                reason="source_root non esiste",
+                reason="source_root does not exist",
             )
         ]
     if not source_root.is_dir():
@@ -63,7 +63,7 @@ def scan_files(
                 size_bytes=source_root.stat().st_size if source_root.exists() else 0,
                 mtime_iso=_mtime_iso(source_root) if source_root.exists() else "",
                 status="error",
-                reason="source_root non è una cartella",
+                reason="source_root is not a directory",
             )
         ]
 
@@ -94,7 +94,7 @@ def scan_files(
                     size_bytes=0,
                     mtime_iso="",
                     status="error",
-                    reason=f"stat fallito: {type(exc).__name__}",
+                    reason=f"stat failed: {type(exc).__name__}",
                 )
             )
 

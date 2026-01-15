@@ -26,8 +26,8 @@ class ToggleDetailsPin(Message):
 
 class FilesTable(DataTable):
     BINDINGS = [
-        ("enter", "toggle_pin", "Blocca dettagli"),
-        ("space", "toggle_pin", "Blocca dettagli"),
+        ("enter", "toggle_pin", "Pin details"),
+        ("space", "toggle_pin", "Pin details"),
     ]
 
     def key_enter(self) -> None:
@@ -51,13 +51,13 @@ class ArchiverApp(App):
     """
 
     BINDINGS = [
-        ("q", "quit", "Esci"),
-        ("ctrl+c", "quit", "Esci"),
-        ("s", "rescan", "Riscansiona"),
-        ("a", "analyze", "Analizza"),
-        ("c", "cancel_analysis", "Stop analisi"),
-        ("R", "reanalyze_row", "Rianalizza riga"),
-        ("A", "reanalyze_all", "Rianalizza tutto"),
+        ("q", "quit", "Quit"),
+        ("ctrl+c", "quit", "Quit"),
+        ("s", "rescan", "Rescan"),
+        ("a", "analyze", "Analyze"),
+        ("c", "cancel_analysis", "Stop analysis"),
+        ("R", "reanalyze_row", "Reanalyze row"),
+        ("A", "reanalyze_all", "Reanalyze all"),
     ]
 
     def __init__(self, settings: Settings) -> None:
@@ -76,19 +76,19 @@ class ArchiverApp(App):
         yield Header()
         with Container(id="top"):
             with Horizontal():
-                yield Static(f"Sorgente: {self.settings.source_root}", id="src")
-                yield Static(f"Archivio: {self.settings.archive_root}", id="arc")
-                yield Static(f"Max file: {self.settings.max_files}", id="max")
-            yield Static("Pronto.", id="notes")
+                yield Static(f"Source: {self.settings.source_root}", id="src")
+                yield Static(f"Archive: {self.settings.archive_root}", id="arc")
+                yield Static(f"Max files: {self.settings.max_files}", id="max")
+            yield Static("Ready.", id="notes")
 
         files = FilesTable(id="files")
-        files.add_column("Stato", key="status")
-        files.add_column("Tipo", key="kind")
+        files.add_column("Status", key="status")
+        files.add_column("Type", key="kind")
         files.add_column("File", key="file")
-        files.add_column("Categoria", key="category")
-        files.add_column("Anno", key="year")
-        files.add_column("Nome proposto", key="name")
-        files.add_column("Motivo", key="reason")
+        files.add_column("Category", key="category")
+        files.add_column("Year", key="year")
+        files.add_column("Proposed name", key="name")
+        files.add_column("Reason", key="reason")
         files.cursor_type = "row"
         yield files
 
@@ -214,7 +214,7 @@ class ArchiverApp(App):
 
     async def _run_discovery(self) -> None:
         notes_widget = self.query_one("#notes", Static)
-        notes_widget.update("Discovery in corso…")
+        notes_widget.update("Detecting local providers…")
 
         def do_discover() -> DiscoveryResult:
             return discover_providers(localai_base_url=self.settings.localai_base_url)
@@ -225,7 +225,7 @@ class ArchiverApp(App):
 
     async def _run_scan(self) -> None:
         notes_widget = self.query_one("#notes", Static)
-        notes_widget.update("Scansione file in corso…")
+        notes_widget.update("Scanning files…")
 
         files = self.query_one("#files", DataTable)
         files.clear()
@@ -303,7 +303,7 @@ class ArchiverApp(App):
                 for idx, it in enumerate(list(self._scan_items)):
                     if it.status != "analysis":
                         continue
-                    updated = replace(it, status="pending", reason="Analisi interrotta")
+                    updated = replace(it, status="pending", reason="Analysis stopped")
                     self._scan_items[idx] = updated
                     key = str(updated.path)
                     files.update_cell(key, "status", _status_cell("pending"))
@@ -378,10 +378,10 @@ class ArchiverApp(App):
             pass
         type_state_cat_year = " • ".join(
             [
-                f"Tipo: {item.kind}",
-                f"Stato: {item.status}",
-                f"Categoria: {item.category or ''}",
-                f"Anno: {item.reference_year or ''}",
+                f"Type: {item.kind}",
+                f"Status: {item.status}",
+                f"Category: {item.category or ''}",
+                f"Year: {item.reference_year or ''}",
             ]
         )
         summary = (item.summary or "").strip()
@@ -393,9 +393,9 @@ class ArchiverApp(App):
             [
                 f"File: {abs_path}",
                 type_state_cat_year,
-                f"Nome proposto: {item.proposed_name or ''}",
+                f"Proposed name: {item.proposed_name or ''}",
                 summary_line,
-                f"Motivo: {item.reason or ''}",
+                f"Reason: {item.reason or ''}",
             ]
         ).strip()
         self.query_one("#details_text", Static).update(text)
@@ -405,14 +405,14 @@ class ArchiverApp(App):
         if self._discovery:
             parts.extend(self._discovery.notes)
             if self._discovery.chosen_text:
-                parts.append(f"Provider testo scelto (auto): {self._discovery.chosen_text}")
+                parts.append(f"Text provider (auto): {self._discovery.chosen_text}")
             if self._discovery.chosen_vision:
-                parts.append(f"Provider vision scelto (auto): {self._discovery.chosen_vision}")
+                parts.append(f"Vision provider (auto): {self._discovery.chosen_vision}")
         if self._analysis_running:
             if self._analysis_cancel_requested:
-                parts.append("Analisi: stop richiesto…")
+                parts.append("Analysis: stop requested…")
             else:
-                parts.append("Analisi: in corso…")
+                parts.append("Analysis: running…")
         if self._scan_items:
             pending = sum(1 for i in self._scan_items if i.status == "pending")
             ready = sum(1 for i in self._scan_items if i.status == "ready")
@@ -420,12 +420,12 @@ class ArchiverApp(App):
             analysis = sum(1 for i in self._scan_items if i.status == "analysis")
             err = sum(1 for i in self._scan_items if i.status == "error")
             parts.append(
-                f"File: {len(self._scan_items)} (pending={pending}, analysis={analysis}, ready={ready}, skipped={skipped}, error={err})"
+                f"Files: {len(self._scan_items)} (pending={pending}, analysis={analysis}, ready={ready}, skipped={skipped}, error={err})"
             )
         if self._details_pinned:
-            parts.append("Dettagli: bloccati (premi Invio/Spazio per sbloccare).")
+            parts.append("Details: pinned (press Enter/Space to unpin).")
         if not parts:
-            parts = ["Nessuna nota."]
+            parts = ["No notes."]
         self.query_one("#notes", Static).update(" ".join(parts))
 
 
