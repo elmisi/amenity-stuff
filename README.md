@@ -1,6 +1,10 @@
-# Archiviatore TUI (LLM locale)
+# amenity-stuff
 
-TUI per scansionare una cartella, rilevare i provider LLM locali disponibili e (nelle prossime milestone) proporre catalogazione/rinomina/spostamento con approvazione per file.
+TUI (Terminal UI) per analizzare file in una cartella usando un LLM locale (via Ollama) e proporre:
+- categoria e anno di riferimento,
+- nuovo nome significativo,
+- destinazione in un archivio `{categoria}/{anno}`,
+con (nelle prossime milestone) approvazione per file e applicazione delle modifiche.
 
 ## Avvio
 
@@ -10,15 +14,21 @@ python3 -m venv .venv
 ./.venv/bin/python -m archiviatore_tui --source /percorso/da/analizzare --archive /percorso/archivio
 ```
 
-## Note LLM locali (discovery)
+## Sicurezza e privacy
+- Esecuzione locale: l’obiettivo è non inviare contenuti a servizi esterni.
+- I file vengono letti e analizzati localmente; con OCR attivo, il testo viene estratto anche da scansioni/immagini.
+- Prima di cambiare provider/modelli, verifica policy e gestione dati del provider.
+
+## Limitazioni (aggiornate nel tempo)
+- Parsing e OCR sono best-effort: alcuni file possono risultare `skipped` o avere output incompleto.
+- La fase “approva e sposta” non è ancora implementata (solo proposta/preview).
+
+## Provider LLM
 
 La schermata iniziale prova a rilevare:
 - `ollama` (se installato in PATH)
 
-### Modelli consigliati (setup attuale)
-Con GPU NVIDIA GTX 1060 6GB e 32GB RAM, i modelli Ollama scaricati e adatti come base sono:
-- Testo (catalogazione/anno/rename): `qwen2.5:7b-instruct`
-- Immagini (descrizione contenuto): `moondream`
+Modelli: il progetto usa un modello testuale e (per immagini) un modello vision; i nomi esatti sono configurabili.
 
 ## Scansione (MVP)
 
@@ -40,7 +50,3 @@ La colonna `Stato` include un marcatore:
 - `✓ ready` proposta pronta
 - `↷ skipped` non classificabile / confidenza bassa
 - `× error` errore I/O o Ollama
-
-## Limitazioni attuali
-- PDF: niente OCR (PDF “scansione” -> `skipped`).
-- Nessuna fase di approvazione/spostamento ancora (solo proposta/preview).
