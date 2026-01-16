@@ -22,15 +22,17 @@ def app_title(*, provider_line: str = "") -> str:
 def status_cell(status: str) -> str:
     # Backward-compatible mapping for older cache entries / statuses.
     status = {
-        "analysis": "extracting",
+        "analysis": "scanning",
+        "extracting": "scanning",
+        "extracted": "scanned",
         "ready": "classified",
         "normalizing": "classifying",
         "normalized": "classified",
     }.get(status, status)
     marker = {
         "pending": "·",
-        "extracting": "…",
-        "extracted": "✓",
+        "scanning": "…",
+        "scanned": "✓",
         "classifying": "≈",
         "classified": "★",
         "skipped": "↷",
@@ -38,8 +40,8 @@ def status_cell(status: str) -> str:
     }.get(status, "?")
     short = {
         "pending": "pend",
-        "extracting": "ext",
-        "extracted": "facts",
+        "scanning": "scan",
+        "scanned": "scan",
         "classifying": "cls",
         "classified": "done",
         "skipped": "skip",
@@ -79,8 +81,8 @@ def notes_line(
     *,
     scan_items_total: int,
     pending: int,
-    extracting: int,
-    extracted: int,
+    scanning: int,
+    scanned: int,
     classifying: int,
     classified: int,
     skipped: int,
@@ -90,8 +92,8 @@ def notes_line(
     bits = [
         f"files: {scan_items_total}" if scan_items_total else "files: 0",
         f"pending: {pending}",
-        f"extracting: {extracting}",
-        f"extracted: {extracted}",
+        f"scanning: {scanning}",
+        f"scanned: {scanned}",
         f"classifying: {classifying}",
         f"classified: {classified}",
         f"skipped: {skipped}",

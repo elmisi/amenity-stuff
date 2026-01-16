@@ -52,7 +52,7 @@ class AnalysisResult:
 
 @dataclass(frozen=True)
 class FactsResult:
-    status: str  # extracted | skipped | error
+    status: str  # scanned | skipped | error
     reason: Optional[str] = None
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
@@ -876,7 +876,7 @@ Output JSON schema:
     facts_json = json.dumps(facts, ensure_ascii=False, sort_keys=True)
 
     return FactsResult(
-        status="extracted",
+        status="scanned",
         summary_long=(summary_long or "").strip()[:4000] or None,
         facts_json=facts_json,
         confidence=conf,

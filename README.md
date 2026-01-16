@@ -58,8 +58,8 @@ The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the se
 - `ctrl+r` reload dir
 - `s` scan row (facts extraction, force)
 - `S` scan pending (facts extraction)
-- `c` classify row (requires `extracted`)
-- `C` classify scanned (`extracted` + `classified`, for coherence)
+- `c` classify row (requires `scanned`)
+- `C` classify scanned (`scanned` + `classified`, for coherence)
 - `x` stop current task
 - `r` reset selected row (back to `pending`, invalidate cache)
 - `R` reset all + clear cache (confirmation)
@@ -73,8 +73,8 @@ Mouse text selection is supported (so you can select/copy fields like absolute p
 ### Status
 The `Status` column includes a marker:
 - `· pending` discovered, waiting
-- `… ext` extracting facts (phase 1)
-- `✓ facts` facts extracted
+- `… scan` scanning (phase 1)
+- `✓ scan` scanned (facts collected)
 - `≈ cls` classifying (phase 2)
 - `★ done` classification proposal available
 - `↷ skipped` not classifiable / low confidence
