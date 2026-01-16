@@ -50,6 +50,21 @@ class AnalysisResult:
     ocr_mode: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class FactsResult:
+    status: str  # extracted | skipped | error
+    reason: Optional[str] = None
+    summary_long: Optional[str] = None
+    facts_json: Optional[str] = None
+    confidence: Optional[float] = None
+    extract_method: Optional[str] = None
+    extract_time_s: Optional[float] = None
+    llm_time_s: Optional[float] = None
+    ocr_time_s: Optional[float] = None
+    ocr_mode: Optional[str] = None
+    model_used: Optional[str] = None
+
+
 def _is_year(value: str) -> bool:
     return bool(re.fullmatch(r"(19\d{2}|20\d{2})", value))
 
@@ -769,6 +784,203 @@ def _try_text_models(
         if res.status == "ready":
             return res
     return last or AnalysisResult(status="error", reason="No text models available")
+
+
+def _extract_facts_from_text(
+    *,
+    model: str,
+    content: str,
+    filename: str,
+    mtime_iso: str,
+    base_url: str,
+    year_hint_filename: Optional[str],
+    year_hint_text: Optional[str],
+    output_language: str,
+) -> FactsResult:
+    if output_language == "it":
+        language_line = "Output language: Italian"
+    elif output_language == "en":
+        language_line = "Output language: English"
+    else:
+        language_line = "Output language: match the input document language (if unclear: English)"
+
+    prompt = f"""
+You are a document understanding assistant. Reply with VALID JSON only (no extra text).
+
+Goal:
+- Extract high-signal facts for later batch classification and coherent renaming.
+- Do NOT classify or propose a filename in this step.
+- {language_line}
+
+Inputs:
+filename: {filename}
+mtime_iso: {mtime_iso}
+year_hint_filename: {year_hint_filename or "null"}
+year_hint_text: {year_hint_text or "null"}
+content:
+\"\"\"{content}\"\"\"
+
+Output JSON schema:
+{{
+  "language": "it"|"en"|"unknown",
+  "doc_type": string|null,
+  "tags": string[],
+  "people": string[],
+  "organizations": string[],
+  "addresses": string[],
+  "amounts": [{{"value": number, "currency": string, "raw": string}}],
+  "identifiers": [{{"type": string, "value": string}}],
+  "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
+  "summary_long": string,
+  "confidence": number,
+  "skip_reason": string|null
+}}
+"""
+    try:
+        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
+    except Exception as exc:  # noqa: BLE001
+        return FactsResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
+    if gen.error:
+        return FactsResult(status="error", reason=f"Ollama errore: {gen.error}", model_used=model)
+
+    data = _extract_json(gen.response)
+    if not isinstance(data, dict):
+        return FactsResult(status="skipped", reason="Unparseable output (JSON)", model_used=model)
+
+    skip_reason = data.get("skip_reason")
+    if isinstance(skip_reason, str) and skip_reason.strip():
+        return FactsResult(status="skipped", reason=skip_reason.strip(), model_used=model)
+
+    summary_long = data.get("summary_long")
+    if not isinstance(summary_long, str) or not summary_long.strip():
+        summary_long = None
+
+    confidence = data.get("confidence")
+    conf = float(confidence) if isinstance(confidence, (int, float)) else None
+    if conf is not None and conf < 0.30:
+        return FactsResult(status="skipped", reason="Low confidence", confidence=conf, model_used=model)
+
+    facts = {
+        "language": data.get("language") if isinstance(data.get("language"), str) else None,
+        "doc_type": data.get("doc_type") if isinstance(data.get("doc_type"), str) else None,
+        "tags": _coerce_list(data.get("tags")),
+        "people": _coerce_list(data.get("people")),
+        "organizations": _coerce_list(data.get("organizations")),
+        "addresses": _coerce_list(data.get("addresses")),
+        "amounts": data.get("amounts") if isinstance(data.get("amounts"), list) else [],
+        "identifiers": data.get("identifiers") if isinstance(data.get("identifiers"), list) else [],
+        "date_candidates": _coerce_date_candidates(data.get("date_candidates")),
+        "year_hint_filename": year_hint_filename,
+        "year_hint_text": year_hint_text,
+    }
+    facts_json = json.dumps(facts, ensure_ascii=False, sort_keys=True)
+
+    return FactsResult(
+        status="extracted",
+        summary_long=(summary_long or "").strip()[:4000] or None,
+        facts_json=facts_json,
+        confidence=conf,
+        model_used=model,
+    )
+
+
+def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult:
+    path = item.path
+    if item.status not in {"pending", "skipped", "error"}:
+        return FactsResult(status=item.status, reason=item.reason)
+
+    year_hint_filename = _extract_year_hint_from_path(path)
+
+    def skipped(reason: str) -> FactsResult:
+        return FactsResult(status="skipped", reason=reason)
+
+    if item.kind == "pdf":
+        text, reason, meta = extract_pdf_text_with_meta(path, ocr_mode=config.ocr_mode)
+        if not text:
+            res = skipped(reason or "No extractable PDF text")
+            if meta:
+                res = replace(
+                    res,
+                    extract_method=meta.method,
+                    extract_time_s=meta.extract_time_s,
+                    ocr_time_s=meta.ocr_time_s,
+                    ocr_mode=meta.ocr_mode,
+                )
+            return res
+        year_hint_text = _extract_year_hint_from_text(text)
+        model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
+        t0 = time.perf_counter()
+        res = _extract_facts_from_text(
+            model=model,
+            content=text,
+            filename=path.name,
+            mtime_iso=item.mtime_iso,
+            base_url=config.ollama_base_url,
+            year_hint_filename=year_hint_filename,
+            year_hint_text=year_hint_text,
+            output_language=config.output_language,
+        )
+        llm_elapsed = time.perf_counter() - t0
+        if meta:
+            res = replace(
+                res,
+                extract_method=meta.method,
+                extract_time_s=meta.extract_time_s,
+                ocr_time_s=meta.ocr_time_s,
+                ocr_mode=meta.ocr_mode,
+            )
+        return replace(res, llm_time_s=llm_elapsed)
+
+    if item.kind == "image":
+        if config.output_language == "it":
+            caption_prompt = "Describe this image in one sentence in Italian."
+        else:
+            caption_prompt = "Describe this image in one sentence in English."
+        caption = ""
+        vision_model_used: str | None = None
+        last_vision_error: str | None = None
+        for vm in _vision_model_candidates(config):
+            try:
+                cap = generate_with_image_file(
+                    model=vm,
+                    prompt=caption_prompt,
+                    image_path=str(path),
+                    base_url=config.ollama_base_url,
+                    timeout_s=180.0,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_vision_error = f"{type(exc).__name__}"
+                continue
+            if cap.error:
+                last_vision_error = cap.error
+                continue
+            caption = cap.response.strip()
+            if caption:
+                vision_model_used = vm
+                break
+        if not caption:
+            msg = "Empty caption" if not last_vision_error else f"Vision error: {last_vision_error}"
+            return skipped(msg)
+
+        model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
+        t0 = time.perf_counter()
+        res = _extract_facts_from_text(
+            model=model,
+            content=f"IMAGE_CAPTION: {caption}",
+            filename=path.name,
+            mtime_iso=item.mtime_iso,
+            base_url=config.ollama_base_url,
+            year_hint_filename=year_hint_filename,
+            year_hint_text=None,
+            output_language=config.output_language,
+        )
+        llm_elapsed = time.perf_counter() - t0
+        used = model
+        if vision_model_used:
+            used = f"{model} (vision: {vision_model_used})"
+        return replace(res, llm_time_s=llm_elapsed, model_used=used)
+
+    return skipped("Unsupported file type")
 
 
 def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
