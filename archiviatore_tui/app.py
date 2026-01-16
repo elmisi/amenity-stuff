@@ -73,7 +73,6 @@ class ArchiverApp(App):
         files.add_column("File", key="file")
         files.add_column("Category", key="category")
         files.add_column("Year", key="year")
-        files.add_column("Reason", key="reason")
         files.cursor_type = "row"
         yield files
 
@@ -351,7 +350,6 @@ class ArchiverApp(App):
                 return
             self._scan_items[idx] = replace(it, status="analysis", reason=None)
             files.update_cell(path_str, "status", _status_cell("analysis"))
-            files.update_cell(path_str, "reason", "")
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -363,7 +361,6 @@ class ArchiverApp(App):
             files.update_cell(path_str, "status", _status_cell(new_item.status))
             files.update_cell(path_str, "category", new_item.category or "")
             files.update_cell(path_str, "year", new_item.reference_year or "")
-            files.update_cell(path_str, "reason", new_item.reason or "")
             if files.cursor_row == idx:
                 self._update_details(idx)
             if self._cache:
@@ -379,7 +376,6 @@ class ArchiverApp(App):
                     self._scan_items[idx] = updated
                     key = str(updated.path)
                     files.update_cell(key, "status", _status_cell("pending"))
-                    files.update_cell(key, "reason", updated.reason or "")
             self._analysis_running = False
             self._render_notes()
 
@@ -455,7 +451,6 @@ class ArchiverApp(App):
         mark_item = replace(reset, status="analysis", reason=None)
         self._scan_items[row_index] = mark_item
         files.update_cell(path_str, "status", _status_cell("analysis"))
-        files.update_cell(path_str, "reason", "")
         self._update_details(row_index)
         self._render_notes()
 
@@ -499,7 +494,6 @@ class ArchiverApp(App):
                 files.update_cell(path_str, "status", _status_cell(updated.status))
                 files.update_cell(path_str, "category", updated.category or "")
                 files.update_cell(path_str, "year", updated.reference_year or "")
-                files.update_cell(path_str, "reason", updated.reason or "")
                 self._update_details(idx)
                 if self._cache:
                     self._cache.upsert(updated)
@@ -526,7 +520,7 @@ class ArchiverApp(App):
             year = item.reference_year or ""
             key = str(item.path)
             self._scan_index_by_path[key] = idx
-            files.add_row(_status_cell(item.status), item.kind, rel, cat, year, item.reason or "", key=key)
+            files.add_row(_status_cell(item.status), item.kind, rel, cat, year, key=key)
 
         if files.row_count:
             if prev_row < 0 or prev_row >= files.row_count:
