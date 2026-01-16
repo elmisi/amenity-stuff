@@ -71,7 +71,7 @@ class ArchiverApp(App):
             yield Static("Ready.", id="notes")
 
         files = DataTable(id="files")
-        files.add_column("Status", key="status", width=10)
+        files.add_column("St", key="status", width=6)
         files.add_column("Type", key="kind")
         files.add_column("File", key="file")
         files.add_column("Category", key="category")
@@ -775,7 +775,16 @@ def _status_cell(status: str) -> str:
         "skipped": "↷",
         "error": "×",
     }.get(status, "?")
-    return f"{marker} {status}"
+    short = {
+        "pending": "pend",
+        "analysis": "anl",
+        "ready": "ready",
+        "normalizing": "norm",
+        "normalized": "done",
+        "skipped": "skip",
+        "error": "err",
+    }.get(status, status[:4])
+    return f"{marker} {short}"
 
 def _app_title() -> str:
     try:
