@@ -20,21 +20,28 @@ def app_title(*, provider_line: str = "") -> str:
 
 
 def status_cell(status: str) -> str:
+    # Backward-compatible mapping for older cache entries / statuses.
+    status = {
+        "analysis": "extracting",
+        "ready": "classified",
+        "normalizing": "classifying",
+        "normalized": "classified",
+    }.get(status, status)
     marker = {
         "pending": "·",
-        "analysis": "…",
-        "ready": "✓",
-        "normalizing": "≈",
-        "normalized": "★",
+        "extracting": "…",
+        "extracted": "✓",
+        "classifying": "≈",
+        "classified": "★",
         "skipped": "↷",
         "error": "×",
     }.get(status, "?")
     short = {
         "pending": "pend",
-        "analysis": "anl",
-        "ready": "ready",
-        "normalizing": "norm",
-        "normalized": "done",
+        "extracting": "ext",
+        "extracted": "facts",
+        "classifying": "cls",
+        "classified": "done",
         "skipped": "skip",
         "error": "err",
     }.get(status, status[:4])
@@ -72,10 +79,10 @@ def notes_line(
     *,
     scan_items_total: int,
     pending: int,
-    analyzing: int,
-    ready: int,
-    normalizing: int,
-    normalized: int,
+    extracting: int,
+    extracted: int,
+    classifying: int,
+    classified: int,
     skipped: int,
     error: int,
     task_state: str,
@@ -83,13 +90,12 @@ def notes_line(
     bits = [
         f"files: {scan_items_total}" if scan_items_total else "files: 0",
         f"pending: {pending}",
-        f"analyzing: {analyzing}",
-        f"ready: {ready}",
-        f"normalizing: {normalizing}",
-        f"normalized: {normalized}",
+        f"extracting: {extracting}",
+        f"extracted: {extracted}",
+        f"classifying: {classifying}",
+        f"classified: {classified}",
         f"skipped: {skipped}",
         f"error: {error}",
         f"task: {task_state}",
     ]
     return " • ".join([b for b in bits if b])
-

@@ -9,7 +9,7 @@ from textual.containers import Container, Horizontal
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
 
-from .analyzer import analyze_item
+from .analyzer import extract_facts_item
 from .cache import CacheStore
 from .config import AppConfig, save_config
 from .confirm_screen import ConfirmResult, ConfirmScreen
@@ -41,9 +41,10 @@ class ArchiverApp(App):
         ("q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
         ("s", "scan", "Scan"),
-        ("a", "analyze_row", "Analyze row"),
-        ("A", "analyze_pending", "Analyze pending"),
-        ("N", "normalize_ready", "Normalize ready"),
+        ("e", "extract_row", "Extract facts (row)"),
+        ("E", "extract_pending", "Extract facts (pending)"),
+        ("n", "classify_row", "Classify (row)"),
+        ("N", "classify_batch", "Classify (batch)"),
         ("p", "stop_analysis", "Stop analysis"),
         ("r", "reset_row", "Reset row"),
         ("R", "reset_all", "Reset all"),
@@ -149,14 +150,27 @@ class ArchiverApp(App):
     async def action_scan(self) -> None:
         await self._run_scan()
 
+    async def action_extract_row(self) -> None:
+        await self._run_extract_row(force=True)
+
+    async def action_extract_pending(self) -> None:
+        await self._run_extract_pending()
+
+    async def action_classify_row(self) -> None:
+        await self._run_classify_row(force=True)
+
+    async def action_classify_batch(self) -> None:
+        await self._run_classify_batch()
+
+    # Backward-compatible actions (no longer bound to keys).
     async def action_analyze_row(self) -> None:
-        await self._run_analyze_row(force=True)
+        await self.action_extract_row()
 
     async def action_analyze_pending(self) -> None:
-        await self._run_analyze_pending()
+        await self.action_extract_pending()
 
     async def action_normalize_ready(self) -> None:
-        await self._run_normalize_ready()
+        await self.action_classify_batch()
 
     async def action_stop_analysis(self) -> None:
         if not self._analysis_task.running or self._analysis_task.worker is None:
@@ -190,6 +204,12 @@ class ArchiverApp(App):
             llm_time_s=None,
             ocr_time_s=None,
             ocr_mode=None,
+            facts_time_s=None,
+            facts_llm_time_s=None,
+            facts_model_used=None,
+            classify_time_s=None,
+            classify_llm_time_s=None,
+            classify_model_used=None,
         )
         self._scan_items[row_index] = reset
         if self._cache:
@@ -237,6 +257,12 @@ class ArchiverApp(App):
                 llm_time_s=None,
                 ocr_time_s=None,
                 ocr_mode=None,
+                facts_time_s=None,
+                facts_llm_time_s=None,
+                facts_model_used=None,
+                classify_time_s=None,
+                classify_llm_time_s=None,
+                classify_model_used=None,
             )
             for it in self._scan_items
         ]
@@ -335,9 +361,15 @@ class ArchiverApp(App):
                 cached = self._cache.get_matching(it)
                 if not cached:
                     continue
+                cached_status = {
+                    "analysis": "extracting",
+                    "ready": "classified",
+                    "normalizing": "classifying",
+                    "normalized": "classified",
+                }.get(cached.status, cached.status)
                 self._scan_items[idx] = replace(
                     it,
-                    status=cached.status,
+                    status=cached_status,
                     reason=cached.reason,
                     category=cached.category,
                     reference_year=cached.reference_year,
@@ -355,12 +387,24 @@ class ArchiverApp(App):
                     llm_time_s=cached.llm_time_s if isinstance(cached.llm_time_s, (int, float)) else None,
                     ocr_time_s=cached.ocr_time_s if isinstance(cached.ocr_time_s, (int, float)) else None,
                     ocr_mode=cached.ocr_mode if isinstance(cached.ocr_mode, str) else None,
+                    facts_time_s=cached.facts_time_s if isinstance(cached.facts_time_s, (int, float)) else None,
+                    facts_llm_time_s=cached.facts_llm_time_s
+                    if isinstance(cached.facts_llm_time_s, (int, float))
+                    else None,
+                    facts_model_used=cached.facts_model_used if isinstance(cached.facts_model_used, str) else None,
+                    classify_time_s=cached.classify_time_s if isinstance(cached.classify_time_s, (int, float)) else None,
+                    classify_llm_time_s=cached.classify_llm_time_s
+                    if isinstance(cached.classify_llm_time_s, (int, float))
+                    else None,
+                    classify_model_used=cached.classify_model_used
+                    if isinstance(cached.classify_model_used, str)
+                    else None,
                 )
         self._render_files()
         self._render_notes()
         self._update_details_from_cursor()
 
-    async def _run_analyze_pending(self) -> None:
+    async def _run_extract_pending(self) -> None:
         if self._analysis_task.running:
             return
         if self._scan_task.running:
@@ -371,15 +415,26 @@ class ArchiverApp(App):
 
         files = self.query_one("#files", DataTable)
 
-        def mark_analysis(path_str: str) -> None:
+        def mark_extracting(path_str: str) -> None:
             idx = self._scan_index_by_path.get(path_str)
             if idx is None:
                 return
             it = self._scan_items[idx]
             if it.status != "pending":
                 return
-            self._scan_items[idx] = replace(it, status="analysis", reason=None)
-            files.update_cell(path_str, "status", status_cell("analysis"))
+            self._scan_items[idx] = replace(
+                it,
+                status="extracting",
+                reason=None,
+                category=None,
+                reference_year=None,
+                proposed_name=None,
+                summary=None,
+                classify_time_s=None,
+                classify_llm_time_s=None,
+                classify_model_used=None,
+            )
+            files.update_cell(path_str, "status", status_cell("extracting"))
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -400,16 +455,16 @@ class ArchiverApp(App):
         def finish(cancelled: bool) -> None:
             if cancelled:
                 for idx, it in enumerate(list(self._scan_items)):
-                    if it.status != "analysis":
+                    if it.status != "extracting":
                         continue
-                    updated = replace(it, status="pending", reason="Analysis stopped")
+                    updated = replace(it, status="pending", reason="Extraction stopped")
                     self._scan_items[idx] = updated
                     key = str(updated.path)
                     files.update_cell(key, "status", status_cell("pending"))
             self._analysis_task.running = False
             self._render_notes()
 
-        def do_analyze_background() -> None:
+        def do_extract_background() -> None:
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             worker = get_current_worker()
@@ -419,18 +474,14 @@ class ArchiverApp(App):
                 if it.status != "pending":
                     continue
                 path_str = str(it.path)
-                self.call_from_thread(mark_analysis, path_str)
+                self.call_from_thread(mark_extracting, path_str)
                 t0 = time.perf_counter()
-                res = analyze_item(it, config=cfg)
+                res = extract_facts_item(it, config=cfg)
                 elapsed = time.perf_counter() - t0
                 updated = replace(
                     it,
                     status=res.status,
                     reason=res.reason,
-                    category=res.category,
-                    reference_year=res.reference_year,
-                    proposed_name=res.proposed_name,
-                    summary=res.summary,
                     confidence=res.confidence,
                     analysis_time_s=elapsed,
                     model_used=res.model_used,
@@ -441,14 +492,21 @@ class ArchiverApp(App):
                     llm_time_s=res.llm_time_s,
                     ocr_time_s=res.ocr_time_s,
                     ocr_mode=res.ocr_mode,
+                    facts_time_s=elapsed,
+                    facts_llm_time_s=res.llm_time_s,
+                    facts_model_used=res.model_used,
+                    category=None,
+                    reference_year=None,
+                    proposed_name=None,
+                    summary=None,
                 )
                 self.call_from_thread(apply_result, path_str, updated)
             self.call_from_thread(finish, worker.is_cancelled)
 
-        worker = self.run_worker(do_analyze_background, thread=True, exclusive=True)
+        worker = self.run_worker(do_extract_background, thread=True, exclusive=True)
         self._analysis_task.worker = worker
 
-    async def _run_normalize_ready(self) -> None:
+    async def _run_classify_batch(self) -> None:
         if self._analysis_task.running or self._scan_task.running:
             return
         if not self._discovery:
@@ -459,7 +517,7 @@ class ArchiverApp(App):
             text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
         model = text_models[0] if text_models else "qwen2.5:7b-instruct"
 
-        targets = [it for it in self._scan_items if it.status in {"ready", "normalized"}]
+        targets = [it for it in self._scan_items if it.status in {"extracted", "classified"}]
         if not targets:
             return
 
@@ -469,15 +527,15 @@ class ArchiverApp(App):
 
         files = self.query_one("#files", DataTable)
 
-        def mark_normalizing(path_str: str) -> None:
+        def mark_classifying(path_str: str) -> None:
             idx = self._scan_index_by_path.get(path_str)
             if idx is None:
                 return
             it = self._scan_items[idx]
-            if it.status not in {"ready", "normalized"}:
+            if it.status not in {"extracted", "classified"}:
                 return
-            self._scan_items[idx] = replace(it, status="normalizing", reason=None)
-            files.update_cell(path_str, "status", status_cell("normalizing"))
+            self._scan_items[idx] = replace(it, status="classifying", reason=None)
+            files.update_cell(path_str, "status", status_cell("classifying"))
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -498,24 +556,25 @@ class ArchiverApp(App):
         def finish(cancelled: bool) -> None:
             if cancelled:
                 for idx, it in enumerate(list(self._scan_items)):
-                    if it.status != "normalizing":
+                    if it.status != "classifying":
                         continue
-                    updated = replace(it, status="ready", reason="Normalization stopped")
+                    updated = replace(it, status="extracted", reason="Classification stopped")
                     self._scan_items[idx] = updated
                     key = str(updated.path)
-                    files.update_cell(key, "status", status_cell("ready"))
+                    files.update_cell(key, "status", status_cell("extracted"))
             self._analysis_task.running = False
             self._render_notes()
 
-        def do_normalize_background() -> None:
+        def do_classify_background() -> None:
             worker = get_current_worker()
             for it in targets:
                 if worker.is_cancelled:
                     break
-                self.call_from_thread(mark_normalizing, str(it.path))
+                self.call_from_thread(mark_classifying, str(it.path))
             if worker.is_cancelled:
                 self.call_from_thread(finish, True)
                 return
+            t0 = time.perf_counter()
             res = normalize_items(
                 items=targets,
                 model=model,
@@ -524,6 +583,7 @@ class ArchiverApp(App):
                 output_language=self.settings.output_language,
                 filename_separator=self.settings.filename_separator,
             )
+            llm_elapsed = time.perf_counter() - t0
             if res.error:
                 for it in targets:
                     if worker.is_cancelled:
@@ -533,11 +593,11 @@ class ArchiverApp(App):
                     if idx is None:
                         continue
                     cur = self._scan_items[idx]
-                    if cur.status == "normalizing":
+                    if cur.status == "classifying":
                         self.call_from_thread(
                             apply_norm,
                             key,
-                            replace(cur, status="ready", reason=f"Normalization error: {res.error}"),
+                            replace(cur, status="extracted", reason=f"Classification error: {res.error}"),
                         )
                 self.call_from_thread(finish, worker.is_cancelled)
                 return
@@ -555,21 +615,24 @@ class ArchiverApp(App):
                 cur = self._scan_items[idx]
                 updated = replace(
                     cur,
-                    status="normalized",
+                    status="classified",
                     category=upd.get("category") or cur.category,
                     reference_year=upd.get("reference_year") or cur.reference_year,
                     proposed_name=upd.get("proposed_name") or cur.proposed_name,
                     summary=upd.get("summary") or cur.summary,
                     model_used=str(upd.get("model_used") or cur.model_used or ""),
                     reason=None,
+                    classify_time_s=llm_elapsed,
+                    classify_llm_time_s=llm_elapsed,
+                    classify_model_used=str(upd.get("model_used") or cur.model_used or ""),
                 )
                 self.call_from_thread(apply_norm, key, updated)
             self.call_from_thread(finish, worker.is_cancelled)
 
-        worker = self.run_worker(do_normalize_background, thread=True, exclusive=True)
+        worker = self.run_worker(do_classify_background, thread=True, exclusive=True)
         self._analysis_task.worker = worker
 
-    async def _run_analyze_row(self, *, force: bool) -> None:
+    async def _run_extract_row(self, *, force: bool) -> None:
         if self._analysis_task.running or self._scan_task.running:
             return
         files = self.query_one("#files", DataTable)
@@ -598,12 +661,18 @@ class ArchiverApp(App):
             llm_time_s=None,
             ocr_time_s=None,
             ocr_mode=None,
+            facts_time_s=None,
+            facts_llm_time_s=None,
+            facts_model_used=None,
+            classify_time_s=None,
+            classify_llm_time_s=None,
+            classify_model_used=None,
         )
         self._scan_items[row_index] = reset
         path_str = str(reset.path)
-        mark_item = replace(reset, status="analysis", reason=None)
+        mark_item = replace(reset, status="extracting", reason=None)
         self._scan_items[row_index] = mark_item
-        files.update_cell(path_str, "status", status_cell("analysis"))
+        files.update_cell(path_str, "status", status_cell("extracting"))
         self._update_details(row_index)
         self._render_notes()
 
@@ -611,16 +680,12 @@ class ArchiverApp(App):
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             t0 = time.perf_counter()
-            res = analyze_item(reset, config=cfg)
+            res = extract_facts_item(reset, config=cfg)
             elapsed = time.perf_counter() - t0
             updated = replace(
                 reset,
                 status=res.status,
                 reason=res.reason,
-                category=res.category,
-                reference_year=res.reference_year,
-                proposed_name=res.proposed_name,
-                summary=res.summary,
                 confidence=res.confidence,
                 analysis_time_s=elapsed,
                 model_used=res.model_used,
@@ -631,6 +696,13 @@ class ArchiverApp(App):
                 llm_time_s=res.llm_time_s,
                 ocr_time_s=res.ocr_time_s,
                 ocr_mode=res.ocr_mode,
+                facts_time_s=elapsed,
+                facts_llm_time_s=res.llm_time_s,
+                facts_model_used=res.model_used,
+                category=None,
+                reference_year=None,
+                proposed_name=None,
+                summary=None,
             )
 
             def apply() -> None:
@@ -641,6 +713,81 @@ class ArchiverApp(App):
                 files.update_cell(path_str, "status", status_cell(updated.status))
                 files.update_cell(path_str, "category", updated.category or "")
                 files.update_cell(path_str, "year", updated.reference_year or "")
+                self._update_details(idx)
+                if self._cache:
+                    self._cache.upsert(updated)
+                    self._cache.save()
+                self._render_notes()
+
+            self.call_from_thread(apply)
+
+        self.run_worker(do_one, thread=True, exclusive=True)
+
+    async def _run_classify_row(self, *, force: bool) -> None:
+        if self._analysis_task.running or self._scan_task.running:
+            return
+        if not self._discovery:
+            return
+        files = self.query_one("#files", DataTable)
+        row_index = files.cursor_row
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        it = self._scan_items[row_index]
+        if it.status != "extracted":
+            self.query_one("#notes", Static).update("Select an extracted file first (press E/e).")
+            return
+
+        taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+        text_models, _ = pick_model_candidates(self._discovery)
+        if self.settings.text_model and self.settings.text_model != "auto":
+            text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
+        model = text_models[0] if text_models else "qwen2.5:7b-instruct"
+
+        key = str(it.path)
+        self._scan_items[row_index] = replace(it, status="classifying", reason=None)
+        files.update_cell(key, "status", status_cell("classifying"))
+        self._update_details(row_index)
+        self._render_notes()
+
+        def do_one() -> None:
+            t0 = time.perf_counter()
+            res = normalize_items(
+                items=[it],
+                model=model,
+                base_url="http://localhost:11434",
+                taxonomy=taxonomy,
+                output_language=self.settings.output_language,
+                filename_separator=self.settings.filename_separator,
+                chunk_size=1,
+            )
+            llm_elapsed = time.perf_counter() - t0
+            upd = res.by_path.get(key) if res.by_path else None
+            if res.error or not upd:
+                updated = replace(it, status="extracted", reason=f"Classification error: {res.error or 'no output'}")
+            else:
+                updated = replace(
+                    it,
+                    status="classified",
+                    reason=None,
+                    category=upd.get("category") or "unknown",
+                    reference_year=upd.get("reference_year") or None,
+                    proposed_name=upd.get("proposed_name") or it.proposed_name,
+                    summary=upd.get("summary") or it.summary,
+                    confidence=upd.get("confidence") if isinstance(upd.get("confidence"), (int, float)) else it.confidence,
+                    model_used=str(upd.get("model_used") or model),
+                    classify_time_s=llm_elapsed,
+                    classify_llm_time_s=llm_elapsed,
+                    classify_model_used=str(upd.get("model_used") or model),
+                )
+
+            def apply() -> None:
+                idx = self._scan_index_by_path.get(key)
+                if idx is None:
+                    return
+                self._scan_items[idx] = updated
+                files.update_cell(key, "status", status_cell(updated.status))
+                files.update_cell(key, "category", updated.category or "")
+                files.update_cell(key, "year", updated.reference_year or "")
                 self._update_details(idx)
                 if self._cache:
                     self._cache.upsert(updated)
@@ -695,10 +842,10 @@ class ArchiverApp(App):
 
     def _render_notes(self) -> None:
         pending = sum(1 for i in self._scan_items if i.status == "pending")
-        analysis = sum(1 for i in self._scan_items if i.status == "analysis")
-        ready = sum(1 for i in self._scan_items if i.status == "ready")
-        normalizing = sum(1 for i in self._scan_items if i.status == "normalizing")
-        normalized = sum(1 for i in self._scan_items if i.status == "normalized")
+        extracting = sum(1 for i in self._scan_items if i.status == "extracting")
+        extracted = sum(1 for i in self._scan_items if i.status == "extracted")
+        classifying = sum(1 for i in self._scan_items if i.status == "classifying")
+        classified = sum(1 for i in self._scan_items if i.status == "classified")
         skipped = sum(1 for i in self._scan_items if i.status == "skipped")
         err = sum(1 for i in self._scan_items if i.status == "error")
         total = len(self._scan_items)
@@ -707,10 +854,10 @@ class ArchiverApp(App):
         if self._analysis_task.running:
             if self._analysis_task.cancel_requested:
                 state = "stopping…"
-            elif normalizing:
-                state = "normalizing…"
-            elif analysis:
-                state = "analyzing…"
+            elif classifying:
+                state = "classifying…"
+            elif extracting:
+                state = "extracting…"
             else:
                 state = "running…"
         if self._scan_task.running:
@@ -720,10 +867,10 @@ class ArchiverApp(App):
             notes_line(
                 scan_items_total=total,
                 pending=pending,
-                analyzing=analysis,
-                ready=ready,
-                normalizing=normalizing,
-                normalized=normalized,
+                extracting=extracting,
+                extracted=extracted,
+                classifying=classifying,
+                classified=classified,
                 skipped=skipped,
                 error=err,
                 task_state=state,

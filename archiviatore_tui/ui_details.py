@@ -58,16 +58,28 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
     )
 
     extra_bits: list[str] = []
-    if isinstance(item.analysis_time_s, (int, float)):
+    if isinstance(item.facts_time_s, (int, float)):
+        extra_bits.append(f"Facts: {item.facts_time_s:.1f}s")
+    if isinstance(item.classify_time_s, (int, float)):
+        extra_bits.append(f"Classify: {item.classify_time_s:.1f}s")
+    if not extra_bits and isinstance(item.analysis_time_s, (int, float)):
         extra_bits.append(f"Elab: {item.analysis_time_s:.1f}s")
     if isinstance(item.extract_time_s, (int, float)) and item.extract_method:
         ext = f"Extract: {item.extract_method} {item.extract_time_s:.1f}s"
         if item.extract_method == "ocr" and item.ocr_mode:
             ext += f" ({item.ocr_mode})"
         extra_bits.append(ext)
-    if isinstance(item.llm_time_s, (int, float)):
+    if isinstance(item.facts_llm_time_s, (int, float)):
+        extra_bits.append(f"LLM(facts): {item.facts_llm_time_s:.1f}s")
+    if isinstance(item.classify_llm_time_s, (int, float)):
+        extra_bits.append(f"LLM(class): {item.classify_llm_time_s:.1f}s")
+    if not (item.facts_llm_time_s or item.classify_llm_time_s) and isinstance(item.llm_time_s, (int, float)):
         extra_bits.append(f"LLM: {item.llm_time_s:.1f}s")
-    if item.model_used:
+    if item.classify_model_used:
+        extra_bits.append(f"Model(class): {item.classify_model_used}")
+    if item.facts_model_used and not item.classify_model_used:
+        extra_bits.append(f"Model(facts): {item.facts_model_used}")
+    if item.model_used and not (item.facts_model_used or item.classify_model_used):
         extra_bits.append(f"Model: {item.model_used}")
     perf_line = " • ".join(extra_bits) if extra_bits else ""
 

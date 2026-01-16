@@ -104,7 +104,7 @@ class CacheStore:
             return None
         if entry.mtime_iso != item.mtime_iso:
             return None
-        if entry.status in {"analysis", "pending"}:
+        if entry.status in {"pending", "analysis", "extracting", "classifying", "normalizing"}:
             return None
         return entry
 
