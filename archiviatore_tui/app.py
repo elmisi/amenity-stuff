@@ -58,6 +58,7 @@ class ArchiverApp(App):
         self._cache: CacheStore | None = None
         self._scan_running: bool = False
         self._scan_worker = None
+        self._provider_line: str = ""
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -294,6 +295,8 @@ class ArchiverApp(App):
 
         worker = self.run_worker(do_discover, thread=True)
         self._discovery = await worker.wait()
+        self._provider_line = _provider_summary(self._discovery, self.settings)
+        self.query_one("#title", Static).update(_app_title(provider_line=self._provider_line))
         self._render_notes()
 
     async def _run_scan(self) -> None:
@@ -722,16 +725,6 @@ class ArchiverApp(App):
         self.query_one("#details_text", Static).update(text)
 
     def _render_notes(self) -> None:
-        provider = "provider: ?"
-        models_part = ""
-        if self._discovery:
-            for p in self._discovery.providers:
-                if p.name == "ollama":
-                    provider = f"provider: ollama ({'OK' if p.available else 'missing'})"
-                    if p.available and p.models:
-                        models_part = f"models: {len(p.models)}"
-                    break
-
         pending = sum(1 for i in self._scan_items if i.status == "pending")
         analysis = sum(1 for i in self._scan_items if i.status == "analysis")
         ready = sum(1 for i in self._scan_items if i.status == "ready")
@@ -755,11 +748,14 @@ class ArchiverApp(App):
             state = "scanning…"
 
         bits = [
-            provider,
-            models_part,
-            f"files: {total} (·{pending} …{analysis} ✓{ready} ≈{normalizing} ★{normalized} ↷{skipped} ×{err})"
-            if total
-            else "files: 0",
+            f"files: {total}" if total else "files: 0",
+            f"pending: {pending}",
+            f"analyzing: {analysis}",
+            f"ready: {ready}",
+            f"normalizing: {normalizing}",
+            f"normalized: {normalized}",
+            f"skipped: {skipped}",
+            f"error: {err}",
             f"task: {state}",
         ]
         self.query_one("#notes", Static).update(" • ".join([b for b in bits if b]))
@@ -786,12 +782,41 @@ def _status_cell(status: str) -> str:
     }.get(status, status[:4])
     return f"{marker} {short}"
 
-def _app_title() -> str:
+def _app_title(*, provider_line: str = "") -> str:
     try:
         ver = metadata.version("amenity-stuff")
     except Exception:
         ver = "dev"
-    return f"amenity-stuff v{ver}"
+    base = f"amenity-stuff v{ver}"
+    if provider_line:
+        return f"{base} • {provider_line}"
+    return base
+
+
+def _provider_summary(discovery: DiscoveryResult | None, settings: Settings) -> str:
+    if not discovery:
+        return ""
+    provider = None
+    models: tuple[str, ...] = ()
+    for p in discovery.providers:
+        if p.name == "ollama":
+            provider = "ollama" if p.available else "ollama(missing)"
+            models = p.models
+            break
+    if not provider:
+        return ""
+
+    text_models, vision_models = _pick_model_candidates(discovery)
+    if settings.text_model and settings.text_model != "auto":
+        text = settings.text_model
+    else:
+        text = text_models[0] if text_models else "auto"
+    if settings.vision_model and settings.vision_model != "auto":
+        vision = settings.vision_model
+    else:
+        vision = vision_models[0] if vision_models else "auto"
+    models_count = f"{len(models)} models" if models else "no models"
+    return f"{provider} • {models_count} • text={text} • vision={vision}"
 
 
 def _pick_model_candidates(discovery: DiscoveryResult | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
