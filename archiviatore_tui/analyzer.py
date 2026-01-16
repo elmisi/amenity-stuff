@@ -914,7 +914,8 @@ Constraints:
 """
     try:
         # Limit generated tokens to keep scan fast; deep scan increases the budget.
-        num_predict = 780 if level == "deep" else 420
+        num_predict = 520 if level == "deep" else 260
+        used_num_predict = num_predict
         # Retry with higher budget if JSON is truncated / unparseable.
         for attempt in range(2):
             gen = generate(
@@ -928,7 +929,8 @@ Constraints:
             data = _extract_json(gen.response)
             if isinstance(data, dict):
                 break
-            num_predict = int(num_predict * 1.4)
+            num_predict = int(num_predict * 1.3)
+            used_num_predict = num_predict
     except Exception as exc:  # noqa: BLE001
         return FactsResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
     if gen.error:
@@ -971,7 +973,7 @@ Constraints:
         summary_long=(summary_long or "").strip()[:4000] or None,
         facts_json=facts_json,
         confidence=conf,
-        model_used=model,
+        model_used=f"{model} (num_predict={used_num_predict})",
     )
 
 
@@ -1004,6 +1006,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
         llm_total = 0.0
         used_level = "fast"
+        scan_attempts = 1
         t0 = time.perf_counter()
         res = _extract_facts_from_text(
             model=model,
@@ -1028,7 +1031,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 return False
             if r.confidence is not None and r.confidence < 0.55:
                 return True
-            if not r.summary_long or len(r.summary_long.strip()) < 160:
+            if not r.summary_long or len(r.summary_long.strip()) < 120:
                 return True
             if not r.facts_json:
                 return True
@@ -1047,6 +1050,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
 
         if needs_deep(res):
             used_level = "deep"
+            scan_attempts = 2
             deep_pack, deep_evidence = _build_evidence_pack(text, max_chars=6500, max_snippets=10)
             deep_excerpt = deep_pack or _content_excerpt_for_llm(text, max_chars=14000)
             t1 = time.perf_counter()
@@ -1083,6 +1087,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                     obj["evidence"] = evidence
                     obj["evidence_source"] = meta.method if meta else "text"
                     obj["scan_level"] = used_level
+                    obj["scan_attempts"] = scan_attempts
                     res = replace(res, facts_json=json.dumps(obj, ensure_ascii=False, sort_keys=True))
             except Exception:
                 pass
