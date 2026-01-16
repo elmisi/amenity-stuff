@@ -21,4 +21,5 @@ class Settings:
     text_model: str = "auto"
     vision_model: str = "auto"
     filename_separator: str = "space"  # space | underscore | dash
+    ocr_mode: str = "balanced"  # fast | balanced | high
     skip_initial_setup: bool = False

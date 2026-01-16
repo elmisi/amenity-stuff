@@ -19,6 +19,7 @@ class SettingsResult:
     text_model: str
     vision_model: str
     filename_separator: str
+    ocr_mode: str
     archive_root: Path
 
 
@@ -49,6 +50,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         text_model: str,
         vision_model: str,
         filename_separator: str,
+        ocr_mode: str,
         archive_root: Path,
         available_models: tuple[str, ...],
     ) -> None:
@@ -60,11 +62,13 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         self._archive_root = archive_root
         self._available_models = available_models
         self._filename_separator = filename_separator if filename_separator in {"space", "underscore", "dash"} else "space"
+        self._ocr_mode = ocr_mode if ocr_mode in {"fast", "balanced", "high"} else "balanced"
 
         self._text_options = ("auto",) + tuple(self._filter_text_models(available_models))
         self._vision_options = ("auto",) + tuple(self._filter_vision_models(available_models))
         self._lang_options = ("auto", "it", "en")
         self._sep_options = ("space", "underscore", "dash")
+        self._ocr_options = ("fast", "balanced", "high")
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -99,6 +103,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 text_model=self._text_model,
                 vision_model=self._vision_model,
                 filename_separator=self._filename_separator,
+                ocr_mode=self._ocr_mode,
                 archive_root=self._archive_root,
             )
         )
@@ -125,7 +130,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 event.stop()
 
     def _activate_option(self, idx: int) -> None:
-        if idx in {0, 1, 2, 4}:
+        if idx in {0, 1, 2, 4, 5}:
             self._cycle_option(idx, forward=True)
             return
         if idx == 3:
@@ -135,7 +140,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 wait_for_dismiss=False,
             )
             return
-        if idx == 5:
+        if idx == 6:
             self.action_focus_taxonomy()
             return
 
@@ -148,6 +153,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             self._output_language = self._cycle_value(self._output_language, self._lang_options, forward=forward)
         elif idx == 4:
             self._filename_separator = self._cycle_value(self._filename_separator, self._sep_options, forward=forward)
+        elif idx == 5:
+            self._ocr_mode = self._cycle_value(self._ocr_mode, self._ocr_options, forward=forward)
         else:
             return
         self._refresh_options()
@@ -171,6 +178,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             f"Output language: {self._output_language}",
             f"Archive folder: {self._archive_root}",
             f"Filename separator: {self._filename_separator}",
+            f"OCR mode: {self._ocr_mode}",
             "Edit taxonomy (press Enter)",
         ]
 
@@ -188,6 +196,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 text_model=self._text_model,
                 vision_model=self._vision_model,
                 filename_separator=self._filename_separator,
+                ocr_mode=self._ocr_mode,
                 archive_root=self._archive_root,
             )
         )

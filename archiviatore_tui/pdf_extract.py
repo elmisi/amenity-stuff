@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Optional, Tuple
+
+
+@dataclass(frozen=True)
+class PdfExtractMeta:
+    method: str
+    extract_time_s: float
+    ocr_time_s: Optional[float] = None
+    ocr_mode: Optional[str] = None
+    pages: Optional[int] = None
+    dpi: Optional[int] = None
 
 
 def extract_pdf_text(path: Path, *, max_chars: int = 15000) -> Optional[str]:
@@ -14,6 +26,17 @@ def extract_pdf_text(path: Path, *, max_chars: int = 15000) -> Optional[str]:
 
 
 def extract_pdf_text_with_reason(path: Path, *, max_chars: int = 15000) -> Tuple[Optional[str], Optional[str]]:
+    text, reason, _meta = extract_pdf_text_with_meta(path, max_chars=max_chars, ocr_mode="balanced")
+    return text, reason
+
+
+def extract_pdf_text_with_meta(
+    path: Path,
+    *,
+    max_chars: int = 15000,
+    ocr_mode: str = "balanced",
+) -> Tuple[Optional[str], Optional[str], Optional[PdfExtractMeta]]:
+    t0 = time.perf_counter()
     # 1) pypdf extraction (if available)
     joined = ""
     try:
@@ -38,18 +61,29 @@ def extract_pdf_text_with_reason(path: Path, *, max_chars: int = 15000) -> Tuple
         joined = ""
 
     if joined:
-        return joined[:max_chars], "text"
+        elapsed = time.perf_counter() - t0
+        return joined[:max_chars], "text", PdfExtractMeta(method="text", extract_time_s=elapsed)
 
     # 2) poppler pdftotext (often better on some PDFs)
     poppler_text = _extract_pdf_text_pdftotext(path, max_chars=max_chars)
     if poppler_text:
-        return poppler_text, "pdftotext"
+        elapsed = time.perf_counter() - t0
+        return poppler_text, "pdftotext", PdfExtractMeta(method="pdftotext", extract_time_s=elapsed)
 
     # 3) OCR fallback
-    ocr_text = _extract_pdf_text_ocr(path, max_chars=max_chars)
+    ocr_text, ocr_meta = _extract_pdf_text_ocr(path, max_chars=max_chars, ocr_mode=ocr_mode)
     if not ocr_text:
-        return None, "No extractable text (enable OCR with system tesseract)"
-    return ocr_text, "ocr"
+        return None, "No extractable text (enable OCR with system tesseract)", None
+    elapsed = time.perf_counter() - t0
+    meta = PdfExtractMeta(
+        method="ocr",
+        extract_time_s=elapsed,
+        ocr_time_s=ocr_meta.ocr_time_s if ocr_meta else elapsed,
+        ocr_mode=ocr_mode,
+        pages=ocr_meta.pages if ocr_meta else None,
+        dpi=ocr_meta.dpi if ocr_meta else None,
+    )
+    return ocr_text, "ocr", meta
 
 
 def _extract_pdf_text_pdftotext(path: Path, *, max_chars: int) -> Optional[str]:
@@ -82,31 +116,58 @@ def _extract_pdf_text_pdftotext(path: Path, *, max_chars: int) -> Optional[str]:
     return text[:max_chars]
 
 
-def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
+@dataclass(frozen=True)
+class OcrMeta:
+    ocr_time_s: float
+    pages: int
+    dpi: int
+
+
+def _ocr_profile(mode: str) -> tuple[int, int, list[str], tuple[str, ...], bool]:
+    """Return (dpi, max_pages, psms, langs, heavy_preprocess)."""
+    m = (mode or "").lower()
+    if m == "fast":
+        return 220, 2, ["6"], ("ita+eng", "eng"), False
+    if m == "high":
+        return 300, 4, ["3", "4", "6", "11"], ("ita+eng", "eng+ita", "eng"), True
+    return 260, 3, ["6", "3"], ("ita+eng", "eng"), True
+
+
+def _ocr_budget_s(mode: str) -> float:
+    m = (mode or "").lower()
+    if m == "fast":
+        return 20.0
+    if m == "high":
+        return 120.0
+    return 45.0
+
+
+def _extract_pdf_text_ocr(path: Path, *, max_chars: int, ocr_mode: str) -> tuple[Optional[str], Optional[OcrMeta]]:
     if not shutil.which("tesseract"):
-        return None
+        return None, None
     try:
         import fitz  # PyMuPDF
     except Exception:
-        return None
+        return None, None
     try:
         from PIL import Image
     except Exception:
-        return None
+        return None, None
     try:
         import pytesseract
     except Exception:
-        return None
+        return None, None
 
     try:
         doc = fitz.open(str(path))
     except Exception:
-        return None
+        return None, None
 
+    dpi, max_pages, alt_psm, langs, heavy_preprocess = _ocr_profile(ocr_mode)
+    t0 = time.perf_counter()
+    budget_s = _ocr_budget_s(ocr_mode)
     ocr_parts: list[str] = []
-    max_pages = 4
     tesseract_config = "--oem 1 --psm 6 -c preserve_interword_spaces=1"
-    alt_psm = ["3", "4", "6", "11"]
 
     def score_text(text: str) -> float:
         t = (text or "").strip()
@@ -126,7 +187,7 @@ def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
     for page_index in range(min(len(doc), max_pages)):
         try:
             page = doc.load_page(page_index)
-            pix = page.get_pixmap(dpi=300)
+            pix = page.get_pixmap(dpi=dpi)
             mode = "RGB" if pix.alpha == 0 else "RGBA"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
         except Exception:
@@ -137,13 +198,11 @@ def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
         try:
             gray = img.convert("L")
             variants.append(gray)
-            try:
+            if heavy_preprocess:
                 from PIL import ImageOps
 
                 variants.append(ImageOps.autocontrast(gray))
                 variants.append(ImageOps.autocontrast(gray).point(lambda x: 255 if x > 180 else 0, mode="1"))
-            except Exception:
-                pass
         except Exception:
             pass
 
@@ -151,10 +210,14 @@ def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
         best_score = 0.0
         for v in variants:
             for psm in alt_psm:
+                if time.perf_counter() - t0 > budget_s:
+                    break
                 cfg = tesseract_config.replace("--psm 6", f"--psm {psm}")
-                for lang in ("ita+eng", "eng+ita", "eng"):
+                for lang in langs:
+                    if time.perf_counter() - t0 > budget_s:
+                        break
                     try:
-                        text = pytesseract.image_to_string(v, lang=lang, config=cfg)
+                        text = pytesseract.image_to_string(v, lang=lang, config=cfg, timeout=30)
                     except Exception:
                         continue
                     text = clean_ocr_artifacts(text)
@@ -162,13 +225,20 @@ def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
                     if s > best_score:
                         best_score = s
                         best_text = text
+                if time.perf_counter() - t0 > budget_s:
+                    break
+            if time.perf_counter() - t0 > budget_s:
+                break
 
         if best_text.strip():
             ocr_parts.append(best_text.strip())
         if sum(len(p) for p in ocr_parts) >= max_chars:
             break
+        if time.perf_counter() - t0 > budget_s:
+            break
 
     joined = "\n\n".join(ocr_parts).strip()
     if not joined:
-        return None
-    return joined[:max_chars]
+        return None, None
+    ocr_elapsed = time.perf_counter() - t0
+    return joined[:max_chars], OcrMeta(ocr_time_s=ocr_elapsed, pages=min(len(doc), max_pages), dpi=dpi)

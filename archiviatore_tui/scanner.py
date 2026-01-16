@@ -24,6 +24,11 @@ class ScanItem:
     model_used: Optional[str] = None
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
+    extract_method: Optional[str] = None
+    extract_time_s: Optional[float] = None
+    llm_time_s: Optional[float] = None
+    ocr_time_s: Optional[float] = None
+    ocr_mode: Optional[str] = None
 
 
 def _infer_kind(path: Path) -> Optional[str]:

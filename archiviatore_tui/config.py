@@ -16,6 +16,7 @@ class AppConfig:
     text_model: str = "auto"
     vision_model: str = "auto"
     filename_separator: str = "space"  # space | underscore | dash
+    ocr_mode: str = "balanced"  # fast | balanced | high
 
 
 def _config_path() -> Path:
@@ -39,6 +40,7 @@ def load_config() -> AppConfig:
     text_model = data.get("text_model")
     vision_model = data.get("vision_model")
     filename_separator = data.get("filename_separator")
+    ocr_mode = data.get("ocr_mode")
 
     kwargs: dict[str, object] = {}
     if isinstance(last_archive, str) and last_archive.strip():
@@ -63,6 +65,10 @@ def load_config() -> AppConfig:
         sep = filename_separator.strip().lower()
         if sep in {"space", "underscore", "dash"}:
             kwargs["filename_separator"] = sep
+    if isinstance(ocr_mode, str) and ocr_mode.strip():
+        mode = ocr_mode.strip().lower()
+        if mode in {"fast", "balanced", "high"}:
+            kwargs["ocr_mode"] = mode
     return AppConfig(**kwargs)  # type: ignore[arg-type]
 
 

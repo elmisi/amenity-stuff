@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Optional
 
 from .ollama_client import generate, generate_with_image_file
-from .pdf_extract import extract_pdf_text_with_reason
+import time
+
+from .pdf_extract import extract_pdf_text_with_meta
 from .scanner import ScanItem
 from .taxonomy import DEFAULT_TAXONOMY_LINES, Taxonomy, parse_taxonomy_lines, taxonomy_to_prompt_block
 
@@ -24,6 +26,7 @@ class AnalysisConfig:
     output_language: str = "auto"  # auto | it | en
     taxonomy: Taxonomy = _DEFAULT_TAXONOMY
     filename_separator: str = "space"  # space | underscore | dash
+    ocr_mode: str = "balanced"  # fast | balanced | high
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,11 @@ class AnalysisResult:
     model_used: Optional[str] = None
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
+    extract_method: Optional[str] = None
+    extract_time_s: Optional[float] = None
+    llm_time_s: Optional[float] = None
+    ocr_time_s: Optional[float] = None
+    ocr_mode: Optional[str] = None
 
 
 def _is_year(value: str) -> bool:
@@ -632,12 +640,13 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
         )
 
     if item.kind == "pdf":
-        text, reason = extract_pdf_text_with_reason(path)
+        text, reason, meta = extract_pdf_text_with_meta(path, ocr_mode=config.ocr_mode)
         if not text:
             return skipped(reason or "No extractable PDF text")
         content_year_hint = _extract_year_hint_from_text(text)
         effective_year_hint = filename_year_hint or content_year_hint
         category_hint = _category_hint_from_signals(path=path, text=text)
+        t0 = time.perf_counter()
         res = _try_text_models(
             cfg=config,
             content=text,
@@ -646,6 +655,16 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             reference_year_hint=effective_year_hint,
             category_hint=category_hint,
         )
+        llm_elapsed = time.perf_counter() - t0
+        if meta:
+            res = replace(
+                res,
+                extract_method=meta.method,
+                extract_time_s=meta.extract_time_s,
+                ocr_time_s=meta.ocr_time_s,
+                ocr_mode=meta.ocr_mode,
+            )
+        res = replace(res, llm_time_s=llm_elapsed)
         if res.status == "skipped":
             return replace(
                 res,

@@ -117,6 +117,7 @@ class ArchiverApp(App):
             text_model=self.settings.text_model,
             vision_model=self.settings.vision_model,
             filename_separator=self.settings.filename_separator,
+            ocr_mode=self.settings.ocr_mode,
             skip_initial_setup=self.settings.skip_initial_setup,
         )
         self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
@@ -135,6 +136,7 @@ class ArchiverApp(App):
                 text_model=self.settings.text_model,
                 vision_model=self.settings.vision_model,
                 filename_separator=self.settings.filename_separator,
+                ocr_mode=self.settings.ocr_mode,
             )
         )
 
@@ -187,6 +189,11 @@ class ArchiverApp(App):
             confidence=None,
             analysis_time_s=None,
             model_used=None,
+            extract_method=None,
+            extract_time_s=None,
+            llm_time_s=None,
+            ocr_time_s=None,
+            ocr_mode=None,
         )
         self._scan_items[row_index] = reset
         if self._cache:
@@ -229,6 +236,11 @@ class ArchiverApp(App):
                 confidence=None,
                 analysis_time_s=None,
                 model_used=None,
+                extract_method=None,
+                extract_time_s=None,
+                llm_time_s=None,
+                ocr_time_s=None,
+                ocr_mode=None,
             )
             for it in self._scan_items
         ]
@@ -254,6 +266,7 @@ class ArchiverApp(App):
                 text_model=self.settings.text_model,
                 vision_model=self.settings.vision_model,
                 filename_separator=self.settings.filename_separator,
+                ocr_mode=self.settings.ocr_mode,
                 archive_root=self.settings.archive_root,
                 available_models=available_models,
             ),
@@ -270,6 +283,7 @@ class ArchiverApp(App):
             vision_model=result.vision_model,
             archive_root=result.archive_root,
             filename_separator=result.filename_separator,
+            ocr_mode=result.ocr_mode,
         )
         self.query_one("#lang", Static).update(f"Lang: {self.settings.output_language}")
         self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
@@ -342,6 +356,11 @@ class ArchiverApp(App):
                     model_used=cached.model_used if isinstance(cached.model_used, str) else None,
                     summary_long=cached.summary_long if isinstance(cached.summary_long, str) else None,
                     facts_json=cached.facts_json if isinstance(cached.facts_json, str) else None,
+                    extract_method=cached.extract_method if isinstance(cached.extract_method, str) else None,
+                    extract_time_s=cached.extract_time_s if isinstance(cached.extract_time_s, (int, float)) else None,
+                    llm_time_s=cached.llm_time_s if isinstance(cached.llm_time_s, (int, float)) else None,
+                    ocr_time_s=cached.ocr_time_s if isinstance(cached.ocr_time_s, (int, float)) else None,
+                    ocr_mode=cached.ocr_mode if isinstance(cached.ocr_mode, str) else None,
                 )
         self._render_files()
         self._render_notes()
@@ -412,6 +431,7 @@ class ArchiverApp(App):
                 text_models=text_models,
                 vision_models=vision_models,
                 filename_separator=self.settings.filename_separator,
+                ocr_mode=self.settings.ocr_mode,
             )
             worker = get_current_worker()
             for it in list(self._scan_items):
@@ -437,6 +457,11 @@ class ArchiverApp(App):
                     model_used=res.model_used,
                     summary_long=res.summary_long,
                     facts_json=res.facts_json,
+                    extract_method=res.extract_method,
+                    extract_time_s=res.extract_time_s,
+                    llm_time_s=res.llm_time_s,
+                    ocr_time_s=res.ocr_time_s,
+                    ocr_mode=res.ocr_mode,
                 )
                 self.call_from_thread(apply_result, path_str, updated)
             self.call_from_thread(finish, worker.is_cancelled)
@@ -587,6 +612,11 @@ class ArchiverApp(App):
             confidence=None,
             analysis_time_s=None,
             model_used=None,
+            extract_method=None,
+            extract_time_s=None,
+            llm_time_s=None,
+            ocr_time_s=None,
+            ocr_mode=None,
         )
         self._scan_items[row_index] = reset
         path_str = str(reset.path)
@@ -612,6 +642,7 @@ class ArchiverApp(App):
                 text_models=text_models,
                 vision_models=vision_models,
                 filename_separator=self.settings.filename_separator,
+                ocr_mode=self.settings.ocr_mode,
             )
             t0 = time.perf_counter()
             res = analyze_item(reset, config=cfg)
@@ -629,6 +660,11 @@ class ArchiverApp(App):
                 model_used=res.model_used,
                 summary_long=res.summary_long,
                 facts_json=res.facts_json,
+                extract_method=res.extract_method,
+                extract_time_s=res.extract_time_s,
+                llm_time_s=res.llm_time_s,
+                ocr_time_s=res.ocr_time_s,
+                ocr_mode=res.ocr_mode,
             )
 
             def apply() -> None:
@@ -702,6 +738,13 @@ class ArchiverApp(App):
         extra_bits: list[str] = []
         if isinstance(item.analysis_time_s, (int, float)):
             extra_bits.append(f"Elab: {item.analysis_time_s:.1f}s")
+        if isinstance(item.extract_time_s, (int, float)) and item.extract_method:
+            ext = f"Extract: {item.extract_method} {item.extract_time_s:.1f}s"
+            if item.extract_method == "ocr" and isinstance(item.ocr_time_s, (int, float)):
+                ext += f" (OCR {item.ocr_time_s:.1f}s{', ' + item.ocr_mode if item.ocr_mode else ''})"
+            extra_bits.append(ext)
+        if isinstance(item.llm_time_s, (int, float)):
+            extra_bits.append(f"LLM: {item.llm_time_s:.1f}s")
         if item.model_used:
             extra_bits.append(f"Model: {item.model_used}")
         if extra_bits:
