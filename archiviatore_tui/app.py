@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import replace
 
 from textual.app import App, ComposeResult
@@ -153,6 +154,8 @@ class ArchiverApp(App):
             proposed_name=None,
             summary=None,
             confidence=None,
+            analysis_time_s=None,
+            model_used=None,
         )
         self._scan_items[row_index] = reset
         if self._cache:
@@ -179,6 +182,8 @@ class ArchiverApp(App):
                 proposed_name=None,
                 summary=None,
                 confidence=None,
+                analysis_time_s=None,
+                model_used=None,
             )
             for it in self._scan_items
         ]
@@ -268,6 +273,10 @@ class ArchiverApp(App):
                     proposed_name=cached.proposed_name,
                     summary=cached.summary,
                     confidence=cached.confidence if isinstance(cached.confidence, (int, float)) else None,
+                    analysis_time_s=cached.analysis_time_s
+                    if isinstance(cached.analysis_time_s, (int, float))
+                    else None,
+                    model_used=cached.model_used if isinstance(cached.model_used, str) else None,
                 )
         self._render_files()
         self._render_notes()
@@ -326,9 +335,12 @@ class ArchiverApp(App):
 
         def do_analyze_background() -> None:
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+            text_models, vision_models = _pick_model_candidates(self._discovery)
             cfg = AnalysisConfig(
                 output_language=self.settings.output_language,
                 taxonomy=taxonomy,
+                text_models=text_models,
+                vision_models=vision_models,
             )
             worker = get_current_worker()
             for it in list(self._scan_items):
@@ -338,7 +350,9 @@ class ArchiverApp(App):
                     continue
                 path_str = str(it.path)
                 self.call_from_thread(mark_analysis, path_str)
+                t0 = time.perf_counter()
                 res = analyze_item(it, config=cfg)
+                elapsed = time.perf_counter() - t0
                 updated = replace(
                     it,
                     status=res.status,
@@ -348,6 +362,8 @@ class ArchiverApp(App):
                     proposed_name=res.proposed_name,
                     summary=res.summary,
                     confidence=res.confidence,
+                    analysis_time_s=elapsed,
+                    model_used=res.model_used,
                 )
                 self.call_from_thread(apply_result, path_str, updated)
             self.call_from_thread(finish, worker.is_cancelled)
@@ -405,6 +421,13 @@ class ArchiverApp(App):
                 f"Year: {item.reference_year or ''}",
             ]
         )
+        extra_bits: list[str] = []
+        if isinstance(item.analysis_time_s, (int, float)):
+            extra_bits.append(f"Elab: {item.analysis_time_s:.1f}s")
+        if item.model_used:
+            extra_bits.append(f"Model: {item.model_used}")
+        if extra_bits:
+            type_state_cat_year = type_state_cat_year + " • " + " • ".join(extra_bits)
         summary = (item.summary or "").strip()
         if summary:
             summary_line = f"Summary: {summary}"
@@ -457,3 +480,57 @@ def _status_cell(status: str) -> str:
         "error": "×",
     }.get(status, "?")
     return f"{marker} {status}"
+
+
+def _pick_model_candidates(discovery: DiscoveryResult | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    models: list[str] = []
+    if discovery:
+        for p in discovery.providers:
+            if p.name == "ollama" and p.available and p.models:
+                models = list(p.models)
+                break
+
+    if not models:
+        return (), ()
+
+    lower = [m.lower() for m in models]
+
+    def has(sub: str) -> list[str]:
+        return [m for m in models if sub in m.lower()]
+
+    known_text_prefer = [
+        "qwen2.5:7b-instruct",
+        "qwen2.5:14b-instruct",
+        "llama3.1:8b-instruct",
+        "llama3.2:3b-instruct",
+        "mistral:7b-instruct",
+        "gemma2:9b-instruct",
+        "phi3:medium",
+    ]
+    text_candidates: list[str] = [m for m in known_text_prefer if m in models]
+    for m in models:
+        ml = m.lower()
+        if m in text_candidates:
+            continue
+        if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
+            continue
+        if "instruct" in ml or "chat" in ml:
+            text_candidates.append(m)
+
+    # Vision candidates.
+    known_vision_prefer = [
+        "moondream:latest",
+        "llama3.2-vision:latest",
+        "llava:latest",
+        "bakllava:latest",
+        "minicpm-v:latest",
+    ]
+    vision_candidates: list[str] = [m for m in known_vision_prefer if m in models]
+    for m in models:
+        ml = m.lower()
+        if m in vision_candidates:
+            continue
+        if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
+            vision_candidates.append(m)
+
+    return tuple(text_candidates[:4]), tuple(vision_candidates[:3])

@@ -20,6 +20,8 @@ class ScanItem:
     proposed_name: Optional[str] = None
     summary: Optional[str] = None
     confidence: Optional[float] = None
+    analysis_time_s: Optional[float] = None
+    model_used: Optional[str] = None
 
 
 def _infer_kind(path: Path) -> Optional[str]:

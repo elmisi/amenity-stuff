@@ -18,6 +18,8 @@ _DEFAULT_TAXONOMY, _ = parse_taxonomy_lines(DEFAULT_TAXONOMY_LINES)
 class AnalysisConfig:
     text_model: str = "qwen2.5:7b-instruct"
     vision_model: str = "moondream:latest"
+    text_models: tuple[str, ...] = ()
+    vision_models: tuple[str, ...] = ()
     ollama_base_url: str = "http://localhost:11434"
     output_language: str = "auto"  # auto | it | en
     taxonomy: Taxonomy = _DEFAULT_TAXONOMY
@@ -32,6 +34,7 @@ class AnalysisResult:
     proposed_name: Optional[str] = None
     summary: Optional[str] = None
     confidence: Optional[float] = None
+    model_used: Optional[str] = None
 
 
 def _is_year(value: str) -> bool:
@@ -307,17 +310,17 @@ Output JSON schema:
     try:
         gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
     except Exception as exc:  # noqa: BLE001 (MVP: best-effort)
-        return AnalysisResult(status="error", reason=f"Ollama errore: {type(exc).__name__}")
+        return AnalysisResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
     if gen.error:
-        return AnalysisResult(status="error", reason=f"Ollama errore: {gen.error}")
+        return AnalysisResult(status="error", reason=f"Ollama errore: {gen.error}", model_used=model)
     out = gen.response
     data = _extract_json(out)
     if not isinstance(data, dict):
-        return AnalysisResult(status="skipped", reason="Unparseable output (JSON)")
+        return AnalysisResult(status="skipped", reason="Unparseable output (JSON)", model_used=model)
 
     skip_reason = data.get("skip_reason")
     if isinstance(skip_reason, str) and skip_reason.strip():
-        return AnalysisResult(status="skipped", reason=skip_reason.strip())
+        return AnalysisResult(status="skipped", reason=skip_reason.strip(), model_used=model)
 
     category = data.get("category")
     if not isinstance(category, str) or category not in categories:
@@ -331,7 +334,7 @@ Output JSON schema:
 
     proposed_name = data.get("proposed_name")
     if not isinstance(proposed_name, str) or not proposed_name.strip():
-        return AnalysisResult(status="skipped", reason="Missing proposed name")
+        return AnalysisResult(status="skipped", reason="Missing proposed name", model_used=model)
 
     proposed_name = _ensure_extension(_sanitize_name(proposed_name), filename)
 
@@ -346,7 +349,7 @@ Output JSON schema:
         conf = None
 
     if conf is not None and conf < 0.35:
-        return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf)
+        return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf, model_used=model)
 
     # If the proposed name is too short / low-signal, derive one from summary.
     if len(Path(proposed_name).stem) < 12 or Path(proposed_name).stem.count("_") < 1:
@@ -379,7 +382,47 @@ Output JSON schema:
         proposed_name=proposed_name,
         summary=(summary or "").strip()[:200] or None,
         confidence=conf,
+        model_used=model,
     )
+
+def _text_model_candidates(cfg: AnalysisConfig) -> tuple[str, ...]:
+    if cfg.text_models:
+        return cfg.text_models
+    return (cfg.text_model,)
+
+
+def _vision_model_candidates(cfg: AnalysisConfig) -> tuple[str, ...]:
+    if cfg.vision_models:
+        return cfg.vision_models
+    return (cfg.vision_model,)
+
+
+def _try_text_models(
+    *,
+    cfg: AnalysisConfig,
+    content: str,
+    filename: str,
+    mtime_iso: str,
+    reference_year_hint: Optional[str],
+    category_hint: Optional[str],
+) -> AnalysisResult:
+    last: AnalysisResult | None = None
+    for model in _text_model_candidates(cfg):
+        res = _classify_from_text(
+            model=model,
+            content=content,
+            filename=filename,
+            mtime_iso=mtime_iso,
+            base_url=cfg.ollama_base_url,
+            reference_year_hint=reference_year_hint,
+            category_hint=category_hint,
+            output_language=cfg.output_language,
+            taxonomy=cfg.taxonomy,
+        )
+        last = res
+        if res.status == "ready":
+            return res
+    return last or AnalysisResult(status="error", reason="No text models available")
 
 
 def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
@@ -414,16 +457,13 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
         content_year_hint = _extract_year_hint_from_text(text)
         effective_year_hint = filename_year_hint or content_year_hint
         category_hint = _category_hint_from_signals(path=path, text=text)
-        res = _classify_from_text(
-            model=config.text_model,
+        res = _try_text_models(
+            cfg=config,
             content=text,
             filename=path.name,
             mtime_iso=item.mtime_iso,
-            base_url=config.ollama_base_url,
             reference_year_hint=effective_year_hint,
             category_hint=category_hint,
-            output_language=config.output_language,
-            taxonomy=config.taxonomy,
         )
         if res.status == "skipped":
             return replace(
@@ -441,32 +481,41 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             caption_prompt = "Describe this image in one sentence in Italian."
         else:
             caption_prompt = "Describe this image in one sentence in English."
-        try:
-            cap = generate_with_image_file(
-                model=config.vision_model,
-                prompt=caption_prompt,
-                image_path=str(path),
-                base_url=config.ollama_base_url,
-                timeout_s=180.0,
-            )
-        except Exception as exc:  # noqa: BLE001 (MVP: best-effort)
-            return AnalysisResult(status="error", reason=f"Ollama vision errore: {type(exc).__name__}")
-        if cap.error:
-            return AnalysisResult(status="error", reason=f"Ollama vision errore: {cap.error}")
-        caption = cap.response.strip()
+        caption = ""
+        vision_model_used: str | None = None
+        last_vision_error: str | None = None
+        for vm in _vision_model_candidates(config):
+            try:
+                cap = generate_with_image_file(
+                    model=vm,
+                    prompt=caption_prompt,
+                    image_path=str(path),
+                    base_url=config.ollama_base_url,
+                    timeout_s=180.0,
+                )
+            except Exception as exc:  # noqa: BLE001 (MVP: best-effort)
+                last_vision_error = f"{type(exc).__name__}"
+                continue
+            if cap.error:
+                last_vision_error = cap.error
+                continue
+            caption = cap.response.strip()
+            if caption:
+                vision_model_used = vm
+                break
         if not caption:
-            return skipped_with_year("Empty caption", effective_year_hint)
-        res = _classify_from_text(
-            model=config.text_model,
+            msg = "Empty caption" if not last_vision_error else f"Vision error: {last_vision_error}"
+            return skipped_with_year(msg, effective_year_hint)
+        res = _try_text_models(
+            cfg=config,
             content=f"IMAGE_CAPTION: {caption}",
             filename=path.name,
             mtime_iso=item.mtime_iso,
-            base_url=config.ollama_base_url,
             reference_year_hint=effective_year_hint,
             category_hint=category_hint,
-            output_language=config.output_language,
-            taxonomy=config.taxonomy,
         )
+        if vision_model_used and res.model_used:
+            res = replace(res, model_used=f"{res.model_used} (vision: {vision_model_used})")
         if res.status == "skipped":
             return replace(
                 res,
