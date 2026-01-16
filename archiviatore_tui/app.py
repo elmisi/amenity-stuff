@@ -15,6 +15,7 @@ from .cache import CacheStore
 from .config import AppConfig, save_config
 from .confirm_screen import ConfirmResult, ConfirmScreen
 from .discovery import DiscoveryResult, discover_providers
+from .normalizer import normalize_items
 from .scanner import ScanItem, scan_files
 from .settings import Settings
 from .settings_screen import SettingsResult, SettingsScreen
@@ -38,6 +39,7 @@ class ArchiverApp(App):
         ("s", "scan", "Scan"),
         ("a", "analyze_row", "Analyze row"),
         ("A", "analyze_pending", "Analyze pending"),
+        ("N", "normalize_ready", "Normalize ready"),
         ("p", "stop_analysis", "Stop analysis"),
         ("r", "reset_row", "Reset row"),
         ("R", "reset_all", "Reset all"),
@@ -149,6 +151,9 @@ class ArchiverApp(App):
 
     async def action_analyze_pending(self) -> None:
         await self._run_analyze_pending()
+
+    async def action_normalize_ready(self) -> None:
+        await self._run_normalize_ready()
 
     async def action_stop_analysis(self) -> None:
         if not self._analysis_running or self._analysis_worker is None:
@@ -435,6 +440,126 @@ class ArchiverApp(App):
 
         self._analysis_worker = self.run_worker(do_analyze_background, thread=True, exclusive=True)
 
+    async def _run_normalize_ready(self) -> None:
+        if self._analysis_running or self._scan_running:
+            return
+        if not self._discovery:
+            return
+        taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+        text_models, _ = _pick_model_candidates(self._discovery)
+        if self.settings.text_model and self.settings.text_model != "auto":
+            text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
+        model = text_models[0] if text_models else "qwen2.5:7b-instruct"
+
+        targets = [it for it in self._scan_items if it.status in {"ready", "normalized"}]
+        if not targets:
+            return
+
+        self._analysis_cancel_requested = False
+        self._analysis_running = True
+        self._render_notes()
+
+        files = self.query_one("#files", DataTable)
+
+        def mark_normalizing(path_str: str) -> None:
+            idx = self._scan_index_by_path.get(path_str)
+            if idx is None:
+                return
+            it = self._scan_items[idx]
+            if it.status not in {"ready", "normalized"}:
+                return
+            self._scan_items[idx] = replace(it, status="normalizing", reason=None)
+            files.update_cell(path_str, "status", _status_cell("normalizing"))
+            if files.cursor_row == idx:
+                self._update_details(idx)
+
+        def apply_norm(path_str: str, updated: ScanItem) -> None:
+            idx = self._scan_index_by_path.get(path_str)
+            if idx is None:
+                return
+            self._scan_items[idx] = updated
+            files.update_cell(path_str, "status", _status_cell(updated.status))
+            files.update_cell(path_str, "category", updated.category or "")
+            files.update_cell(path_str, "year", updated.reference_year or "")
+            if files.cursor_row == idx:
+                self._update_details(idx)
+            if self._cache:
+                self._cache.upsert(updated)
+                self._cache.save()
+
+        def finish(cancelled: bool) -> None:
+            if cancelled:
+                for idx, it in enumerate(list(self._scan_items)):
+                    if it.status != "normalizing":
+                        continue
+                    updated = replace(it, status="ready", reason="Normalization stopped")
+                    self._scan_items[idx] = updated
+                    key = str(updated.path)
+                    files.update_cell(key, "status", _status_cell("ready"))
+            self._analysis_running = False
+            self._render_notes()
+
+        def do_normalize_background() -> None:
+            worker = get_current_worker()
+            for it in targets:
+                if worker.is_cancelled:
+                    break
+                self.call_from_thread(mark_normalizing, str(it.path))
+            if worker.is_cancelled:
+                self.call_from_thread(finish, True)
+                return
+            res = normalize_items(
+                items=targets,
+                model=model,
+                base_url="http://localhost:11434",
+                taxonomy=taxonomy,
+                output_language=self.settings.output_language,
+                filename_separator=self.settings.filename_separator,
+            )
+            if res.error:
+                for it in targets:
+                    if worker.is_cancelled:
+                        break
+                    key = str(it.path)
+                    idx = self._scan_index_by_path.get(key)
+                    if idx is None:
+                        continue
+                    cur = self._scan_items[idx]
+                    if cur.status == "normalizing":
+                        self.call_from_thread(
+                            apply_norm,
+                            key,
+                            replace(cur, status="ready", reason=f"Normalization error: {res.error}"),
+                        )
+                self.call_from_thread(finish, worker.is_cancelled)
+                return
+
+            for it in targets:
+                if worker.is_cancelled:
+                    break
+                key = str(it.path)
+                upd = res.by_path.get(key)
+                if not upd:
+                    continue
+                idx = self._scan_index_by_path.get(key)
+                if idx is None:
+                    continue
+                cur = self._scan_items[idx]
+                updated = replace(
+                    cur,
+                    status="normalized",
+                    category=upd.get("category") or cur.category,
+                    reference_year=upd.get("reference_year") or cur.reference_year,
+                    proposed_name=upd.get("proposed_name") or cur.proposed_name,
+                    summary=upd.get("summary") or cur.summary,
+                    model_used=str(upd.get("model_used") or cur.model_used or ""),
+                    reason=None,
+                )
+                self.call_from_thread(apply_norm, key, updated)
+            self.call_from_thread(finish, worker.is_cancelled)
+
+        self._analysis_worker = self.run_worker(do_normalize_background, thread=True, exclusive=True)
+
     async def _run_analyze_row(self, *, force: bool) -> None:
         if self._analysis_running or self._scan_running:
             return
@@ -610,21 +735,32 @@ class ArchiverApp(App):
         pending = sum(1 for i in self._scan_items if i.status == "pending")
         analysis = sum(1 for i in self._scan_items if i.status == "analysis")
         ready = sum(1 for i in self._scan_items if i.status == "ready")
+        normalizing = sum(1 for i in self._scan_items if i.status == "normalizing")
+        normalized = sum(1 for i in self._scan_items if i.status == "normalized")
         skipped = sum(1 for i in self._scan_items if i.status == "skipped")
         err = sum(1 for i in self._scan_items if i.status == "error")
         total = len(self._scan_items)
 
         state = "idle"
         if self._analysis_running:
-            state = "stopping…" if self._analysis_cancel_requested else "running…"
+            if self._analysis_cancel_requested:
+                state = "stopping…"
+            elif normalizing:
+                state = "normalizing…"
+            elif analysis:
+                state = "analyzing…"
+            else:
+                state = "running…"
         if self._scan_running:
             state = "scanning…"
 
         bits = [
             provider,
             models_part,
-            f"files: {total} (·{pending} …{analysis} ✓{ready} ↷{skipped} ×{err})" if total else "files: 0",
-            f"analysis: {state}",
+            f"files: {total} (·{pending} …{analysis} ✓{ready} ≈{normalizing} ★{normalized} ↷{skipped} ×{err})"
+            if total
+            else "files: 0",
+            f"task: {state}",
         ]
         self.query_one("#notes", Static).update(" • ".join([b for b in bits if b]))
 
@@ -634,6 +770,8 @@ def _status_cell(status: str) -> str:
         "pending": "·",
         "analysis": "…",
         "ready": "✓",
+        "normalizing": "≈",
+        "normalized": "★",
         "skipped": "↷",
         "error": "×",
     }.get(status, "?")
