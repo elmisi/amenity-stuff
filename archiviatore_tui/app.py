@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 import time
 from dataclasses import replace
 
@@ -46,6 +49,7 @@ class ArchiverApp(App):
         ("c", "classify_row", "Classify row"),
         ("C", "classify_batch", "Classify scanned"),
         ("x", "stop_analysis", "Stop scan"),
+        ("enter", "open_file", "Open file"),
         ("r", "reset_row", "Reset row"),
         ("R", "reset_all", "Reset all"),
         ("f2", "settings", "Settings"),
@@ -161,6 +165,31 @@ class ArchiverApp(App):
 
     async def action_classify_batch(self) -> None:
         await self._run_classify_batch()
+
+    async def action_open_file(self) -> None:
+        files = self.query_one("#files", DataTable)
+        row_index = files.cursor_row
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        path = self._scan_items[row_index].path
+        try:
+            if sys.platform.startswith("linux"):
+                subprocess.Popen(
+                    ["xdg-open", str(path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif sys.platform == "darwin":
+                subprocess.Popen(
+                    ["open", str(path)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif os.name == "nt":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+        except Exception:
+            # Silent failure by design.
+            return
 
     # Backward-compatible actions (no longer bound to keys).
     async def action_analyze_row(self) -> None:

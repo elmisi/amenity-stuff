@@ -61,6 +61,7 @@ The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the se
 - `c` classify row (requires `scanned`)
 - `C` classify scanned (`scanned` + `classified`, for coherence)
 - `x` stop current task
+- `enter` open selected file (default app)
 - `r` reset selected row (back to `pending`, invalidate cache)
 - `R` reset all + clear cache (confirmation)
 - `F2` settings
