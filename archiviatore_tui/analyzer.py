@@ -218,7 +218,64 @@ _STOPWORDS = {
     "nella",
     "nelle",
     "all",
+    # Generic / low-signal words often seen in LLM-generated names
+    "this",
+    "document",
+    "doc",
+    "file",
+    "text",
+    "image",
+    "photo",
+    "picture",
+    "scan",
+    "scanned",
+    "documento",
+    "immagine",
+    "foto",
+    "testo",
+    "scansione",
 }
+
+
+_GENERIC_NAME_TOKENS = {
+    "this",
+    "document",
+    "doc",
+    "file",
+    "text",
+    "image",
+    "photo",
+    "picture",
+    "scan",
+    "scanned",
+    "documento",
+    "immagine",
+    "foto",
+    "testo",
+    "scansione",
+}
+
+
+def _cleanup_generic_words_in_name(*, proposed_name: str, original_filename: str) -> str:
+    """Remove generic words like 'this document' from model-proposed names.
+
+    Keep meaningful document types (e.g. invoice, payslip) untouched.
+    """
+
+    original_ext = Path(original_filename).suffix
+    ext = Path(proposed_name).suffix or original_ext
+    stem = Path(proposed_name).stem
+    tokens = re.split(r"[\\s_\\-]+", stem.strip())
+    cleaned: list[str] = []
+    for t in tokens:
+        if not t:
+            continue
+        if t.lower() in _GENERIC_NAME_TOKENS:
+            continue
+        cleaned.append(t)
+    if not cleaned:
+        return _sanitize_name(Path(original_filename).stem) + ext
+    return _sanitize_name("_".join(cleaned)) + ext
 
 
 def _fallback_name_from_summary(*, summary: Optional[str], original_filename: str) -> str:
@@ -337,6 +394,7 @@ Output JSON schema:
         return AnalysisResult(status="skipped", reason="Missing proposed name", model_used=model)
 
     proposed_name = _ensure_extension(_sanitize_name(proposed_name), filename)
+    proposed_name = _cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
 
     summary = data.get("summary")
     if not isinstance(summary, str):
@@ -354,6 +412,7 @@ Output JSON schema:
     # If the proposed name is too short / low-signal, derive one from summary.
     if len(Path(proposed_name).stem) < 12 or Path(proposed_name).stem.count("_") < 1:
         proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename)
+        proposed_name = _cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
 
     # If category is unknown, fall back to hint.
     if category == "unknown" and category_hint in categories:

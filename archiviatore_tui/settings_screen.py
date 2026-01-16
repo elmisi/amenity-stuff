@@ -33,6 +33,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         ("escape", "cancel", "Cancel"),
         ("ctrl+s", "save", "Save"),
         ("r", "reset_defaults", "Reset defaults"),
+        ("l", "focus_language", "Language"),
+        ("t", "focus_taxonomy", "Taxonomy"),
     ]
 
     def __init__(self, *, output_language: str, taxonomy_lines: tuple[str, ...]) -> None:
@@ -42,7 +44,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield Static("Settings (Ctrl+S save • Esc cancel • r reset)", id="intro")
+        yield Static("Settings (l language • t taxonomy • Ctrl+S save • Esc cancel • r reset)", id="intro")
 
         with Container(id="form"):
             with Horizontal(id="lang_row"):
@@ -68,7 +70,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#taxonomy", TextArea).focus()
+        self.query_one("#lang", Select).focus()
 
     def action_cancel(self) -> None:
         self.dismiss(SettingsResult(output_language=self._output_language, taxonomy_lines=self._taxonomy_lines))
@@ -79,6 +81,12 @@ class SettingsScreen(ModalScreen[SettingsResult]):
     def action_reset_defaults(self) -> None:
         self.query_one("#taxonomy", TextArea).text = "\n".join(DEFAULT_TAXONOMY_LINES).strip() + "\n"
         self.query_one("#errors", Static).update("")
+    
+    def action_focus_language(self) -> None:
+        self.query_one("#lang", Select).focus()
+
+    def action_focus_taxonomy(self) -> None:
+        self.query_one("#taxonomy", TextArea).focus()
 
     def _save(self) -> None:
         lang = self.query_one("#lang", Select).value or "auto"

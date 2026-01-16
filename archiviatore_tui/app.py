@@ -68,7 +68,6 @@ class ArchiverApp(App):
         files.add_column("File", key="file")
         files.add_column("Category", key="category")
         files.add_column("Year", key="year")
-        files.add_column("Proposed name", key="name")
         files.add_column("Reason", key="reason")
         files.cursor_type = "row"
         yield files
@@ -312,7 +311,6 @@ class ArchiverApp(App):
             files.update_cell(path_str, "status", _status_cell(new_item.status))
             files.update_cell(path_str, "category", new_item.category or "")
             files.update_cell(path_str, "year", new_item.reference_year or "")
-            files.update_cell(path_str, "name", new_item.proposed_name or "")
             files.update_cell(path_str, "reason", new_item.reason or "")
             if files.cursor_row == idx:
                 self._update_details(idx)
@@ -384,10 +382,9 @@ class ArchiverApp(App):
                 pass
             cat = item.category or ""
             year = item.reference_year or ""
-            name = item.proposed_name or ""
             key = str(item.path)
             self._scan_index_by_path[key] = idx
-            files.add_row(_status_cell(item.status), item.kind, rel, cat, year, name, item.reason or "", key=key)
+            files.add_row(_status_cell(item.status), item.kind, rel, cat, year, item.reason or "", key=key)
 
         if files.row_count:
             if prev_row < 0 or prev_row >= files.row_count:
