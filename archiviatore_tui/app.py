@@ -707,6 +707,10 @@ class ArchiverApp(App):
         self._update_details(row_index)
         self._render_notes()
 
+        self._analysis_task.cancel_requested = False
+        self._analysis_task.running = True
+        self._render_notes()
+
         def do_one() -> None:
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
@@ -748,11 +752,13 @@ class ArchiverApp(App):
                 if self._cache:
                     self._cache.upsert(updated)
                     self._cache.save()
+                self._analysis_task.running = False
                 self._render_notes()
 
             self.call_from_thread(apply)
 
-        self.run_worker(do_one, thread=True, exclusive=True)
+        worker = self.run_worker(do_one, thread=True, exclusive=True)
+        self._analysis_task.worker = worker
 
     async def _run_classify_row(self, *, force: bool) -> None:
         if self._analysis_task.running or self._scan_task.running:
@@ -778,6 +784,8 @@ class ArchiverApp(App):
         self._scan_items[row_index] = replace(it, status="classifying", reason=None)
         files.update_cell(key, "status", status_cell("classifying"))
         self._update_details(row_index)
+        self._analysis_task.cancel_requested = False
+        self._analysis_task.running = True
         self._render_notes()
 
         def do_one() -> None:
@@ -823,11 +831,13 @@ class ArchiverApp(App):
                 if self._cache:
                     self._cache.upsert(updated)
                     self._cache.save()
+                self._analysis_task.running = False
                 self._render_notes()
 
             self.call_from_thread(apply)
 
-        self.run_worker(do_one, thread=True, exclusive=True)
+        worker = self.run_worker(do_one, thread=True, exclusive=True)
+        self._analysis_task.worker = worker
 
     def _render_files(self) -> None:
         files = self.query_one("#files", DataTable)
