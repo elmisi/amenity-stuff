@@ -1,10 +1,10 @@
 # amenity-stuff
 
-Terminal UI to analyze files in a folder using a local LLM (via Ollama) and propose:
-- category and reference year,
-- a more meaningful file name,
-- a target location in an archive structured as `{category}/{year}`,
-with (in upcoming milestones) per-file approval and applying changes.
+Terminal UI to organize files using a local LLM (via Ollama) with a 2-phase workflow:
+1) extract high-signal facts (no classification yet),
+2) batch classify + propose coherent file names (taxonomy-driven).
+
+Upcoming milestones include per-file approval and applying rename/move operations into an archive structured as `{category}/{year}`.
 
 ## Run
 
@@ -17,8 +17,9 @@ amenity-stuff
 ## Settings
 
 You can change:
-- output language for `summary` / `proposed name` (`auto`, `it`, `en`)
-- taxonomy (the allowed categories)
+- output language (`auto`, `it`, `en`)
+- taxonomy (allowed categories)
+- models (text / vision), archive folder, filename separator, OCR mode
 
 Press `F2` in the TUI to open Settings. Configuration is stored in `~/.config/amenity-stuff/config.json`.
 
@@ -55,27 +56,32 @@ The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the se
 
 ### Keys
 - `s` rescan
-- `a` analyze `pending` files (LLM)
-- `c` stop analysis (you can restart with `a`)
-- `A` force reanalyze all (reset + clear cache)
-- `R` force reanalyze selected row
+- `e` extract facts (selected row, force)
+- `E` extract facts (all `pending`)
+- `n` classify (selected row; requires `extracted`)
+- `N` classify (batch; `extracted` + `classified`, for coherence)
+- `p` stop current task
+- `r` reset selected row (back to `pending`, invalidate cache)
+- `R` reset all + clear cache (confirmation)
 - `F2` settings
 - `q` or `ctrl+c` quit
 
-During `a`, status transitions to `analysis` and the UI remains interactive while results update row by row.
+During extraction/classification, status transitions and the UI remains interactive while results update row by row.
 
 Mouse text selection is supported (so you can select/copy fields like absolute paths).
 
 ### Status
 The `Status` column includes a marker:
 - `· pending` discovered, waiting
-- `… analysis` being analyzed
-- `✓ ready` proposal available
+- `… ext` extracting facts (phase 1)
+- `✓ facts` facts extracted
+- `≈ cls` classifying (phase 2)
+- `★ done` classification proposal available
 - `↷ skipped` not classifiable / low confidence
 - `× error` I/O or Ollama error
 
 ### Cache (MVP)
 
 Results are cached in `<source>/.amenity-stuff/cache.json` and reused on re-scan.
-- `R` invalidates cache for the selected file
-- `A` clears the cache for the whole batch
+- `r` invalidates cache for the selected file
+- `R` clears the cache for the whole batch
