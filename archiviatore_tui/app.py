@@ -35,9 +35,10 @@ class ArchiverApp(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
-        ("s", "scan_toggle", "Scan"),
+        ("s", "scan", "Scan"),
         ("a", "analyze_row", "Analyze row"),
         ("A", "analyze_pending", "Analyze pending"),
+        ("p", "stop_analysis", "Stop analysis"),
         ("r", "reset_row", "Reset row"),
         ("R", "reset_all", "Reset all"),
         ("f2", "settings", "Settings"),
@@ -138,14 +139,24 @@ class ArchiverApp(App):
         self.query_one("#files", DataTable).focus()
         self._update_details_from_cursor()
 
-    async def action_scan_toggle(self) -> None:
-        await self._run_scan_toggle()
+    async def action_scan(self) -> None:
+        await self._run_scan()
 
     async def action_analyze_row(self) -> None:
         await self._run_analyze_row(force=True)
 
     async def action_analyze_pending(self) -> None:
         await self._run_analyze_pending()
+
+    async def action_stop_analysis(self) -> None:
+        if not self._analysis_running or self._analysis_worker is None:
+            return
+        self._analysis_cancel_requested = True
+        try:
+            self._analysis_worker.cancel()
+        except Exception:
+            pass
+        self._render_notes()
 
     async def action_reset_row(self) -> None:
         if self._analysis_running or self._scan_running:
@@ -286,7 +297,6 @@ class ArchiverApp(App):
                 max_files=self.settings.max_files,
                 include_extensions=self.settings.include_extensions,
                 exclude_dirnames=self.settings.exclude_dirnames,
-                should_cancel=lambda: bool(get_current_worker().is_cancelled),
             )
 
         worker = self.run_worker(do_scan, thread=True, exclusive=True)
@@ -318,17 +328,6 @@ class ArchiverApp(App):
         self._render_files()
         self._render_notes()
         self._update_details_from_cursor()
-
-    async def _run_scan_toggle(self) -> None:
-        if self._scan_running and self._scan_worker is not None:
-            try:
-                self._scan_worker.cancel()
-            except Exception:
-                pass
-            return
-        if self._analysis_running:
-            return
-        await self._run_scan()
 
     async def _run_analyze_pending(self) -> None:
         if self._analysis_running:
