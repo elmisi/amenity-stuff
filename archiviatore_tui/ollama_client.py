@@ -35,6 +35,7 @@ def generate(
     base_url: str = "http://localhost:11434",
     timeout_s: float = 120.0,
     images_b64: Optional[list[str]] = None,
+    options: Optional[dict[str, Any]] = None,
 ) -> OllamaGenerateResult:
     url = base_url.rstrip("/") + "/api/generate"
     payload: dict[str, Any] = {
@@ -44,6 +45,8 @@ def generate(
     }
     if images_b64:
         payload["images"] = images_b64
+    if options:
+        payload["options"] = options
     data = _post_json(url, payload, timeout_s=timeout_s)
     return OllamaGenerateResult(
         response=str(data.get("response", "")),

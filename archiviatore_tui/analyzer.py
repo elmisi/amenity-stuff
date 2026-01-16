@@ -327,11 +327,15 @@ def _build_evidence_pack(text: str, *, max_chars: int = 3500, max_snippets: int 
     evidence = [{"snippet": ln[:200]} for ln in uniq]
 
     # Build the evidence pack.
-    head = t[: min(len(t), int(max_chars * 0.45))].strip()
-    tail = t[-min(len(t), int(max_chars * 0.25)) :].strip()
-    mid = "\n".join(uniq).strip()
-    pack = "\n\n".join([p for p in [head, mid, tail] if p]).strip()
-    pack = _content_excerpt_for_llm(pack, max_chars=max_chars)
+    # Important: if the document is already short, do NOT concatenate head+mid+tail (it would duplicate content).
+    if len(t) <= max_chars:
+        pack = t
+    else:
+        head = t[: int(max_chars * 0.45)].strip()
+        tail = t[-int(max_chars * 0.25) :].strip()
+        mid = "\n".join(uniq).strip()
+        pack = "\n\n".join([p for p in [head, mid, tail] if p]).strip()
+        pack = _content_excerpt_for_llm(pack, max_chars=max_chars)
     return pack, evidence
 
 
@@ -864,6 +868,7 @@ def _extract_facts_from_text(
     year_hint_filename: Optional[str],
     year_hint_text: Optional[str],
     output_language: str,
+    detail_level: str = "fast",  # fast | deep
 ) -> FactsResult:
     if output_language == "it":
         language_line = "Output language: Italian"
@@ -871,6 +876,12 @@ def _extract_facts_from_text(
         language_line = "Output language: English"
     else:
         language_line = "Output language: match the input document language (if unclear: English)"
+
+    level = (detail_level or "fast").lower()
+    if level == "deep":
+        summary_line = '  "summary_long": string,   // 8-14 sentences, include the most important extracted values (who/what/when/how much/ids)'
+    else:
+        summary_line = '  "summary_long": string,   // 3-6 sentences, include the most important extracted values (who/what/when/how much/ids)'
 
     prompt = f"""
 You are a document understanding assistant. Reply with VALID JSON only (no extra text).
@@ -902,13 +913,21 @@ Output JSON schema:
   "identifiers": [{{"type": string, "value": string}}],
   "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
   "evidence": [{{"source": "text"|"pdftotext"|"ocr"|"image", "snippet": string}}],  // max 6 items, max 200 chars each
-  "summary_long": string,   // 6-12 sentences, include the most important extracted values (who/what/when/how much/ids)
+{summary_line}
   "confidence": number,
   "skip_reason": string|null
 }}
 """
     try:
-        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
+        # Limit generated tokens to keep scan fast; deep scan increases the budget.
+        num_predict = 520 if level == "deep" else 260
+        gen = generate(
+            model=model,
+            prompt=prompt,
+            base_url=base_url,
+            timeout_s=180.0,
+            options={"temperature": 0.2, "num_predict": num_predict},
+        )
     except Exception as exc:  # noqa: BLE001
         return FactsResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
     if gen.error:
@@ -984,6 +1003,8 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         evidence_pack, evidence = _build_evidence_pack(text, max_chars=3500)
         excerpt = evidence_pack or _content_excerpt_for_llm(text, max_chars=14000)
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
+        llm_total = 0.0
+        used_level = "fast"
         t0 = time.perf_counter()
         res = _extract_facts_from_text(
             model=model,
@@ -994,8 +1015,54 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
             year_hint_filename=year_hint_filename,
             year_hint_text=year_hint_text,
             output_language=config.output_language,
+            detail_level="fast",
         )
-        llm_elapsed = time.perf_counter() - t0
+        llm_total += time.perf_counter() - t0
+
+        def needs_deep(r: FactsResult) -> bool:
+            if r.status != "scanned":
+                return False
+            if r.confidence is not None and r.confidence < 0.55:
+                return True
+            if not r.summary_long or len(r.summary_long.strip()) < 160:
+                return True
+            if not r.facts_json:
+                return True
+            try:
+                obj = json.loads(r.facts_json)
+            except Exception:
+                return True
+            if not isinstance(obj, dict):
+                return True
+            if not (isinstance(obj.get("purpose"), str) and obj.get("purpose", "").strip()):
+                return True
+            # OCR docs often need a second pass to recover entities/amounts.
+            if meta and meta.method == "ocr":
+                return True
+            return False
+
+        if needs_deep(res):
+            used_level = "deep"
+            deep_pack, deep_evidence = _build_evidence_pack(text, max_chars=6500, max_snippets=10)
+            deep_excerpt = deep_pack or _content_excerpt_for_llm(text, max_chars=14000)
+            t1 = time.perf_counter()
+            deep = _extract_facts_from_text(
+                model=model,
+                content=deep_excerpt,
+                filename=path.name,
+                mtime_iso=item.mtime_iso,
+                base_url=config.ollama_base_url,
+                year_hint_filename=year_hint_filename,
+                year_hint_text=year_hint_text,
+                output_language=config.output_language,
+                detail_level="deep",
+            )
+            llm_total += time.perf_counter() - t1
+            if deep.status == "scanned":
+                # Prefer deep output but keep the richer evidence list.
+                res = deep
+                evidence = deep_evidence or evidence
+
         if meta:
             res = replace(
                 res,
@@ -1004,16 +1071,18 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 ocr_time_s=meta.ocr_time_s,
                 ocr_mode=meta.ocr_mode,
             )
+        res = replace(res, llm_time_s=llm_total)
         if res.facts_json and evidence:
             try:
                 obj = json.loads(res.facts_json)
                 if isinstance(obj, dict):
                     obj["evidence"] = evidence
                     obj["evidence_source"] = meta.method if meta else "text"
+                    obj["scan_level"] = used_level
                     res = replace(res, facts_json=json.dumps(obj, ensure_ascii=False, sort_keys=True))
             except Exception:
                 pass
-        return replace(res, llm_time_s=llm_elapsed)
+        return res
 
     if item.kind == "image":
         if config.output_language == "it":
