@@ -688,9 +688,9 @@ class ArchiverApp(App):
         item = self._scan_items[row_index]
         details_widget = self.query_one("#details_text", Static)
         width = details_widget.size.width or (self.size.width - 4)
-        height = details_widget.size.height or 9
         details_widget.update(
-            render_details(item, settings=self.settings, max_width=max(40, width), max_lines=max(6, height))
+            # Let the widget clip to the fixed panel height; avoid adding our own “…” line.
+            render_details(item, settings=self.settings, max_width=max(40, width))
         )
 
     def _render_notes(self) -> None:
