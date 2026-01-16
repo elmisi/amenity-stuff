@@ -216,6 +216,42 @@ def _parse_facts_json(value: Optional[str]) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _best_year_from_facts(facts: dict, *, summary_long: Optional[str], proposed_name: Optional[str]) -> Optional[str]:
+    # 1) explicit candidates from phase 1
+    candidates = facts.get("date_candidates")
+    best: tuple[float, str] | None = None
+    if isinstance(candidates, list):
+        for c in candidates:
+            if not isinstance(c, dict):
+                continue
+            y = c.get("year")
+            if not isinstance(y, str) or not re.fullmatch(r"(19\d{2}|20\d{2})", y.strip()):
+                continue
+            conf = c.get("confidence")
+            score = float(conf) if isinstance(conf, (int, float)) else 0.0
+            typ = c.get("type")
+            if isinstance(typ, str) and typ.strip().lower() == "reference":
+                score += 0.2
+            if best is None or score > best[0]:
+                best = (score, y.strip())
+    if best is not None:
+        return best[1]
+
+    # 2) year hints collected in phase 1
+    for key in ("year_hint_text", "year_hint_filename"):
+        v = facts.get(key)
+        if isinstance(v, str) and re.fullmatch(r"(19\d{2}|20\d{2})", v.strip()):
+            return v.strip()
+
+    # 3) extract from summary_long or proposed_name if present
+    for text in (summary_long or "", proposed_name or ""):
+        m = re.search(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
+        if m:
+            return m.group(1)
+
+    return None
+
+
 def _propose_name_from_summary_and_facts(
     *,
     summary_long: Optional[str],
@@ -384,11 +420,9 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
 
             cur_facts = _parse_facts_json(src.facts_json) if src else {}
 
-            # If year is missing, prefer a year hint extracted from filename/path (collected in phase 1).
-            if not year:
-                yhint = cur_facts.get("year_hint_filename")
-                if isinstance(yhint, str) and re.fullmatch(r"(19\\d{2}|20\\d{2})", yhint.strip()):
-                    year = yhint.strip()
+            # If year is missing, derive it from facts/hints/summary.
+            if not year and src:
+                year = _best_year_from_facts(cur_facts, summary_long=src.summary_long, proposed_name=name)
 
             # If the model output is generic, rebuild deterministically from summary_long + facts_json.
             if src and src.summary_long:
