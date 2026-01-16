@@ -900,40 +900,40 @@ year_hint_text: {year_hint_text or "null"}
 content:
 \"\"\"{content}\"\"\"
 
-Output JSON schema:
-{{
-  "language": "it"|"en"|"unknown",
-  "doc_type": string|null,
-  "purpose": string,        // one sentence: why this document exists / what it is for
-  "tags": string[],
-  "people": string[],
-  "organizations": string[],
-  "addresses": string[],
-  "amounts": [{{"value": number, "currency": string, "raw": string}}],
-  "identifiers": [{{"type": string, "value": string}}],
-  "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
-  "evidence": [{{"source": "text"|"pdftotext"|"ocr"|"image", "snippet": string}}],  // max 6 items, max 200 chars each
-{summary_line}
-  "confidence": number,
-  "skip_reason": string|null
-}}
+Return a single JSON object with exactly these keys:
+language, doc_type, purpose, tags, people, organizations, addresses, amounts, identifiers, date_candidates, summary_long, confidence, skip_reason.
+
+Constraints:
+- purpose: 1 sentence (why this document exists)
+- people: string[] (names only, max 5)
+- organizations: string[] (names only, max 5)
+- addresses: string[] (max 3)
+- amounts: max 3 items, each {{"value": number, "currency": string, "raw": string}}
+- identifiers: max 6 items, each {{"type": string, "value": string}}
+- summary_long: {summary_line.split('//')[1].strip() if '//' in summary_line else ''}
 """
     try:
         # Limit generated tokens to keep scan fast; deep scan increases the budget.
-        num_predict = 520 if level == "deep" else 260
-        gen = generate(
-            model=model,
-            prompt=prompt,
-            base_url=base_url,
-            timeout_s=180.0,
-            options={"temperature": 0.2, "num_predict": num_predict},
-        )
+        num_predict = 780 if level == "deep" else 420
+        # Retry with higher budget if JSON is truncated / unparseable.
+        for attempt in range(2):
+            gen = generate(
+                model=model,
+                prompt=prompt,
+                base_url=base_url,
+                timeout_s=180.0,
+                options={"temperature": 0.2 if attempt == 0 else 0.0, "num_predict": num_predict},
+                response_format="json",
+            )
+            data = _extract_json(gen.response)
+            if isinstance(data, dict):
+                break
+            num_predict = int(num_predict * 1.4)
     except Exception as exc:  # noqa: BLE001
         return FactsResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
     if gen.error:
         return FactsResult(status="error", reason=f"Ollama errore: {gen.error}", model_used=model)
 
-    data = _extract_json(gen.response)
     if not isinstance(data, dict):
         return FactsResult(status="skipped", reason="Unparseable output (JSON)", model_used=model)
 
@@ -961,7 +961,6 @@ Output JSON schema:
         "amounts": data.get("amounts") if isinstance(data.get("amounts"), list) else [],
         "identifiers": data.get("identifiers") if isinstance(data.get("identifiers"), list) else [],
         "date_candidates": _coerce_date_candidates(data.get("date_candidates")),
-        "evidence": data.get("evidence") if isinstance(data.get("evidence"), list) else [],
         "year_hint_filename": year_hint_filename,
         "year_hint_text": year_hint_text,
     }
@@ -1020,6 +1019,11 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         llm_total += time.perf_counter() - t0
 
         def needs_deep(r: FactsResult) -> bool:
+            if r.status == "skipped" and isinstance(r.reason, str):
+                if "Unparseable output" in r.reason:
+                    return True
+                if "Low confidence" in r.reason:
+                    return True
             if r.status != "scanned":
                 return False
             if r.confidence is not None and r.confidence < 0.55:
@@ -1058,8 +1062,8 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 detail_level="deep",
             )
             llm_total += time.perf_counter() - t1
-            if deep.status == "scanned":
-                # Prefer deep output but keep the richer evidence list.
+            # Prefer deep output when it improves on the fast pass.
+            if deep.status == "scanned" or (res.status != "scanned" and deep.status != "error"):
                 res = deep
                 evidence = deep_evidence or evidence
 

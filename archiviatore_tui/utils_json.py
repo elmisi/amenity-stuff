@@ -5,24 +5,37 @@ import re
 from typing import Optional
 
 
-def extract_json_dict(text: str) -> Optional[dict]:
-    """Best-effort extraction of a JSON object (dict) from model output."""
-    raw = (text or "").strip()
-    if not raw:
+def _scan_json_value(raw: str) -> Optional[object]:
+    """Best-effort JSON value extractor from arbitrary text.
+
+    Uses JSONDecoder.raw_decode to find the first valid JSON value (dict/list/etc).
+    """
+    text = (raw or "").strip()
+    if not text:
         return None
+
+    decoder = json.JSONDecoder()
+    # Fast path: full string is JSON.
     try:
-        val = json.loads(raw)
-        return val if isinstance(val, dict) else None
+        return json.loads(text)
     except Exception:
         pass
-    match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        val = json.loads(match.group(0))
-        return val if isinstance(val, dict) else None
-    except Exception:
-        return None
+
+    # Try to locate a JSON value start and decode from there.
+    for m in re.finditer(r"[\{\[]", text):
+        idx = m.start()
+        try:
+            val, _end = decoder.raw_decode(text[idx:])
+        except Exception:
+            continue
+        return val
+    return None
+
+
+def extract_json_dict(text: str) -> Optional[dict]:
+    """Best-effort extraction of a JSON object (dict) from model output."""
+    val = _scan_json_value(text)
+    return val if isinstance(val, dict) else None
 
 
 def extract_json_any(text: str) -> Optional[object]:
@@ -30,20 +43,4 @@ def extract_json_any(text: str) -> Optional[object]:
 
     Prefers lists first, then dicts, since batch operations often return JSON lists.
     """
-    raw = (text or "").strip()
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except Exception:
-        pass
-    match = re.search(r"\[.*\]", raw, flags=re.DOTALL)
-    if not match:
-        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
-
+    return _scan_json_value(text)
