@@ -55,12 +55,12 @@ Models: the app uses a text model and (for images) a vision model; exact model n
 The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the selected source folder.
 
 ### Keys
-- `s` rescan
-- `e` extract facts (selected row, force)
-- `E` extract facts (all `pending`)
-- `n` classify (selected row; requires `extracted`)
-- `N` classify (batch; `extracted` + `classified`, for coherence)
-- `p` stop current task
+- `ctrl+r` reload dir
+- `s` scan row (facts extraction, force)
+- `S` scan pending (facts extraction)
+- `c` classify row (requires `extracted`)
+- `C` classify scanned (`extracted` + `classified`, for coherence)
+- `x` stop current task
 - `r` reset selected row (back to `pending`, invalidate cache)
 - `R` reset all + clear cache (confirmation)
 - `F2` settings
