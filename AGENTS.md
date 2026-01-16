@@ -56,3 +56,7 @@ When refactoring, do not change functionality unless explicitly requested:
 - Commit logically grouped changes with clear messages (e.g. `tui: refactor settings screen`).
 - Keep refactors separate from behavior changes when possible.
 
+## Versioning (Repo / App)
+- The current version is stored in `VERSION` and mirrored in `pyproject.toml`.
+- Bump the **patch** version for every commit on `main` to keep builds/reproducibility simple.
+- Helper: run `python3 scripts/bump_version.py` before committing (updates both files).
