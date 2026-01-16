@@ -13,6 +13,8 @@ class AppConfig:
     last_source_root: Optional[str] = None
     output_language: str = "auto"  # auto | it | en
     taxonomy_lines: tuple[str, ...] = ()
+    text_model: str = "auto"
+    vision_model: str = "auto"
 
 
 def _config_path() -> Path:
@@ -33,6 +35,8 @@ def load_config() -> AppConfig:
     last_source = data.get("last_source_root")
     output_language = data.get("output_language")
     taxonomy_lines = data.get("taxonomy_lines")
+    text_model = data.get("text_model")
+    vision_model = data.get("vision_model")
 
     kwargs: dict[str, object] = {}
     if isinstance(last_archive, str) and last_archive.strip():
@@ -49,6 +53,10 @@ def load_config() -> AppConfig:
             if isinstance(v, str) and v.strip():
                 lines.append(v.rstrip("\n"))
         kwargs["taxonomy_lines"] = tuple(lines)
+    if isinstance(text_model, str) and text_model.strip():
+        kwargs["text_model"] = text_model.strip()
+    if isinstance(vision_model, str) and vision_model.strip():
+        kwargs["vision_model"] = vision_model.strip()
     return AppConfig(**kwargs)  # type: ignore[arg-type]
 
 

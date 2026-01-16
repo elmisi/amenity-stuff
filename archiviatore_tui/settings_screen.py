@@ -14,6 +14,9 @@ from .taxonomy import DEFAULT_TAXONOMY_LINES, parse_taxonomy_lines
 class SettingsResult:
     output_language: str
     taxonomy_lines: tuple[str, ...]
+    text_model: str
+    vision_model: str
+    request_folder_picker: bool = False
 
 
 class SettingsScreen(ModalScreen[SettingsResult]):
@@ -35,18 +38,36 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         ("r", "reset_defaults", "Reset defaults"),
         ("l", "focus_language", "Language"),
         ("t", "focus_taxonomy", "Taxonomy"),
+        ("m", "focus_models", "Models"),
+        ("p", "pick_folders", "Folders"),
     ]
 
-    def __init__(self, *, output_language: str, taxonomy_lines: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        output_language: str,
+        taxonomy_lines: tuple[str, ...],
+        text_model: str,
+        vision_model: str,
+        available_models: tuple[str, ...],
+    ) -> None:
         super().__init__()
         self._output_language = output_language
         self._taxonomy_lines = taxonomy_lines
+        self._text_model = text_model or "auto"
+        self._vision_model = vision_model or "auto"
+        self._available_models = available_models
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield Static("Settings (l language • t taxonomy • Ctrl+S save • Esc cancel • r reset)", id="intro")
+        yield Static("Settings (p folders • m models • l language • t taxonomy • Ctrl+S save • Esc cancel • r reset)", id="intro")
 
         with Container(id="form"):
+            with Horizontal(id="model_row"):
+                yield Static("Text model:", id="text_model_label")
+                yield Select(self._text_model_options(), value=self._text_model, id="text_model")
+                yield Static("Vision model:", id="vision_model_label")
+                yield Select(self._vision_model_options(), value=self._vision_model, id="vision_model")
             with Horizontal(id="lang_row"):
                 yield Static("Output language:", id="lang_label")
                 yield Select(
@@ -59,7 +80,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                     id="lang",
                 )
             yield Static("Taxonomy (one category per line): name | description | examples", id="taxonomy_label")
-            yield TextArea("\n".join(self._taxonomy_lines).strip() + "\n", id="taxonomy")
+            yield TextArea("\n".join(self._taxonomy_lines).strip() + "\n", id="taxonomy", tab_behavior="indent")
             yield Static("", id="errors")
 
         yield Static(
@@ -70,10 +91,18 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#lang", Select).focus()
+        self.query_one("#text_model", Select).focus()
 
     def action_cancel(self) -> None:
-        self.dismiss(SettingsResult(output_language=self._output_language, taxonomy_lines=self._taxonomy_lines))
+        self.dismiss(
+            SettingsResult(
+                output_language=self._output_language,
+                taxonomy_lines=self._taxonomy_lines,
+                text_model=self._text_model,
+                vision_model=self._vision_model,
+                request_folder_picker=False,
+            )
+        )
 
     def action_save(self) -> None:
         self._save()
@@ -88,12 +117,53 @@ class SettingsScreen(ModalScreen[SettingsResult]):
     def action_focus_taxonomy(self) -> None:
         self.query_one("#taxonomy", TextArea).focus()
 
+    def action_focus_models(self) -> None:
+        self.query_one("#text_model", Select).focus()
+
+    def action_pick_folders(self) -> None:
+        self.dismiss(
+            SettingsResult(
+                output_language=self._output_language,
+                taxonomy_lines=self._taxonomy_lines,
+                text_model=str(self.query_one("#text_model", Select).value or self._text_model),
+                vision_model=str(self.query_one("#vision_model", Select).value or self._vision_model),
+                request_folder_picker=True,
+            )
+        )
+
+    def _text_model_options(self) -> list[tuple[str, str]]:
+        opts: list[tuple[str, str]] = [("Auto (recommended)", "auto")]
+        for m in self._available_models:
+            ml = m.lower()
+            if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
+                continue
+            opts.append((m, m))
+        return opts
+
+    def _vision_model_options(self) -> list[tuple[str, str]]:
+        opts: list[tuple[str, str]] = [("Auto (recommended)", "auto")]
+        for m in self._available_models:
+            ml = m.lower()
+            if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
+                opts.append((m, m))
+        return opts
+
     def _save(self) -> None:
         lang = self.query_one("#lang", Select).value or "auto"
+        text_model = self.query_one("#text_model", Select).value or "auto"
+        vision_model = self.query_one("#vision_model", Select).value or "auto"
         text = self.query_one("#taxonomy", TextArea).text
         lines = tuple(ln.rstrip("\n") for ln in text.splitlines() if ln.strip())
         _, errors = parse_taxonomy_lines(lines)
         if errors:
             self.query_one("#errors", Static).update("\n".join(errors[:6]))
             return
-        self.dismiss(SettingsResult(output_language=str(lang), taxonomy_lines=lines))
+        self.dismiss(
+            SettingsResult(
+                output_language=str(lang),
+                taxonomy_lines=lines,
+                text_model=str(text_model),
+                vision_model=str(vision_model),
+                request_folder_picker=False,
+            )
+        )

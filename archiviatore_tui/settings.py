@@ -18,3 +18,6 @@ class Settings:
     exclude_dirnames: tuple[str, ...] = (".git", ".venv", "ARCHIVIO")
     output_language: str = "auto"  # auto | it | en
     taxonomy_lines: tuple[str, ...] = DEFAULT_TAXONOMY_LINES
+    text_model: str = "auto"
+    vision_model: str = "auto"
+    skip_initial_setup: bool = False

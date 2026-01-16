@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
+from importlib import metadata
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
@@ -56,9 +57,10 @@ class ArchiverApp(App):
         yield Header()
         with Container(id="top"):
             with Horizontal():
+                yield Static(_app_title(), id="title")
                 yield Static(f"Source: {self.settings.source_root}", id="src")
                 yield Static(f"Archive: {self.settings.archive_root}", id="arc")
-                yield Static(f"Max files: {self.settings.max_files}", id="max")
+                yield Static(f"Max: {self.settings.max_files}", id="max")
                 yield Static(f"Lang: {self.settings.output_language}", id="lang")
             yield Static("Ready.", id="notes")
 
@@ -81,6 +83,10 @@ class ArchiverApp(App):
     async def on_mount(self) -> None:
         initial_source = self.settings.source_root.expanduser().resolve()
         initial_archive = self.settings.archive_root.expanduser().resolve()
+        if self.settings.skip_initial_setup:
+            self._apply_setup(setup=SetupResult(source_root=initial_source, archive_root=initial_archive))
+            asyncio.create_task(self._post_setup())
+            return
         self.push_screen(
             SetupScreen(source_root=initial_source, archive_root=initial_archive),
             callback=self._on_setup_done,
@@ -88,6 +94,10 @@ class ArchiverApp(App):
         )
 
     def _on_setup_done(self, setup: SetupResult) -> None:
+        self._apply_setup(setup=setup)
+        asyncio.create_task(self._post_setup())
+
+    def _apply_setup(self, *, setup: SetupResult) -> None:
         self.settings = Settings(
             source_root=setup.source_root,
             archive_root=setup.archive_root,
@@ -98,21 +108,27 @@ class ArchiverApp(App):
             exclude_dirnames=self.settings.exclude_dirnames,
             output_language=self.settings.output_language,
             taxonomy_lines=self.settings.taxonomy_lines,
+            text_model=self.settings.text_model,
+            vision_model=self.settings.vision_model,
+            skip_initial_setup=self.settings.skip_initial_setup,
         )
+        self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
+        self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
+        self._cache = CacheStore(self.settings.source_root)
+        self._cache.load()
+        self._save_app_config()
+
+    def _save_app_config(self) -> None:
         save_config(
             AppConfig(
                 last_archive_root=str(self.settings.archive_root),
                 last_source_root=str(self.settings.source_root),
                 output_language=self.settings.output_language,
                 taxonomy_lines=self.settings.taxonomy_lines,
+                text_model=self.settings.text_model,
+                vision_model=self.settings.vision_model,
             )
         )
-        self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
-        self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
-        self._cache = CacheStore(self.settings.source_root)
-        self._cache.load()
-
-        asyncio.create_task(self._post_setup())
 
     async def _post_setup(self) -> None:
         await self._run_discovery()
@@ -193,31 +209,49 @@ class ArchiverApp(App):
     async def action_settings(self) -> None:
         if self._analysis_running:
             return
+        available_models: tuple[str, ...] = ()
+        if self._discovery:
+            for p in self._discovery.providers:
+                if p.name == "ollama" and p.available and p.models:
+                    available_models = p.models
+                    break
         self.push_screen(
             SettingsScreen(
                 output_language=self.settings.output_language,
                 taxonomy_lines=self.settings.taxonomy_lines,
+                text_model=self.settings.text_model,
+                vision_model=self.settings.vision_model,
+                available_models=available_models,
             ),
             callback=self._on_settings_done,
             wait_for_dismiss=False,
         )
 
     def _on_settings_done(self, result: SettingsResult) -> None:
+        if result.request_folder_picker:
+            self.push_screen(
+                SetupScreen(
+                    source_root=self.settings.source_root.expanduser().resolve(),
+                    archive_root=self.settings.archive_root.expanduser().resolve(),
+                ),
+                callback=self._on_folders_done,
+                wait_for_dismiss=False,
+            )
+            return
         self.settings = replace(
             self.settings,
             output_language=result.output_language,
             taxonomy_lines=result.taxonomy_lines,
+            text_model=result.text_model,
+            vision_model=result.vision_model,
         )
         self.query_one("#lang", Static).update(f"Lang: {self.settings.output_language}")
-        save_config(
-            AppConfig(
-                last_archive_root=str(self.settings.archive_root),
-                last_source_root=str(self.settings.source_root),
-                output_language=self.settings.output_language,
-                taxonomy_lines=self.settings.taxonomy_lines,
-            )
-        )
+        self._save_app_config()
         self._render_notes()
+
+    def _on_folders_done(self, setup: SetupResult) -> None:
+        self._apply_setup(setup=setup)
+        asyncio.create_task(self._run_scan())
 
     async def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "files":
@@ -334,6 +368,13 @@ class ArchiverApp(App):
         def do_analyze_background() -> None:
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
             text_models, vision_models = _pick_model_candidates(self._discovery)
+            if self.settings.text_model and self.settings.text_model != "auto":
+                text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
+            if self.settings.vision_model and self.settings.vision_model != "auto":
+                vision_models = (
+                    self.settings.vision_model,
+                    *tuple(m for m in vision_models if m != self.settings.vision_model),
+                )
             cfg = AnalysisConfig(
                 output_language=self.settings.output_language,
                 taxonomy=taxonomy,
@@ -442,30 +483,34 @@ class ArchiverApp(App):
         self.query_one("#details_text", Static).update(text)
 
     def _render_notes(self) -> None:
-        parts: list[str] = []
+        provider = "provider: ?"
+        models_part = ""
         if self._discovery:
-            parts.extend(self._discovery.notes)
-            if self._discovery.chosen_text:
-                parts.append(f"Text provider (auto): {self._discovery.chosen_text}")
-            if self._discovery.chosen_vision:
-                parts.append(f"Vision provider (auto): {self._discovery.chosen_vision}")
+            for p in self._discovery.providers:
+                if p.name == "ollama":
+                    provider = f"provider: ollama ({'OK' if p.available else 'missing'})"
+                    if p.available and p.models:
+                        models_part = f"models: {len(p.models)}"
+                    break
+
+        pending = sum(1 for i in self._scan_items if i.status == "pending")
+        analysis = sum(1 for i in self._scan_items if i.status == "analysis")
+        ready = sum(1 for i in self._scan_items if i.status == "ready")
+        skipped = sum(1 for i in self._scan_items if i.status == "skipped")
+        err = sum(1 for i in self._scan_items if i.status == "error")
+        total = len(self._scan_items)
+
+        state = "idle"
         if self._analysis_running:
-            if self._analysis_cancel_requested:
-                parts.append("Analysis: stop requested…")
-            else:
-                parts.append("Analysis: running…")
-        if self._scan_items:
-            pending = sum(1 for i in self._scan_items if i.status == "pending")
-            ready = sum(1 for i in self._scan_items if i.status == "ready")
-            skipped = sum(1 for i in self._scan_items if i.status == "skipped")
-            analysis = sum(1 for i in self._scan_items if i.status == "analysis")
-            err = sum(1 for i in self._scan_items if i.status == "error")
-            parts.append(
-                f"Files: {len(self._scan_items)} (pending={pending}, analysis={analysis}, ready={ready}, skipped={skipped}, error={err})"
-            )
-        if not parts:
-            parts = ["No notes."]
-        self.query_one("#notes", Static).update(" ".join(parts))
+            state = "stopping…" if self._analysis_cancel_requested else "running…"
+
+        bits = [
+            provider,
+            models_part,
+            f"files: {total} (·{pending} …{analysis} ✓{ready} ↷{skipped} ×{err})" if total else "files: 0",
+            f"analysis: {state}",
+        ]
+        self.query_one("#notes", Static).update(" • ".join([b for b in bits if b]))
 
 
 def _status_cell(status: str) -> str:
@@ -477,6 +522,13 @@ def _status_cell(status: str) -> str:
         "error": "×",
     }.get(status, "?")
     return f"{marker} {status}"
+
+def _app_title() -> str:
+    try:
+        ver = metadata.version("amenity-stuff")
+    except Exception:
+        ver = "dev"
+    return f"amenity-stuff v{ver}"
 
 
 def _pick_model_candidates(discovery: DiscoveryResult | None) -> tuple[tuple[str, ...], tuple[str, ...]]:

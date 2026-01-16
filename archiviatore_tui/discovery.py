@@ -74,11 +74,7 @@ def discover_providers(*, localai_base_url: Optional[str] = None) -> DiscoveryRe
 
     _ = localai_base_url  # reserved for future providers
 
-    gguf_dir = Path("/home/elmisi/ai-models/llm/gguf")
-    if gguf_dir.is_dir():
-        ggufs = list(gguf_dir.glob("*.gguf"))
-        if ggufs:
-            notes.append(f"Found {len(ggufs)} GGUF models in {gguf_dir}.")
+    # Reserved for future local model discovery (GGUF etc). Keep notes minimal in the main UI.
 
     chosen_text = None
     chosen_vision = None

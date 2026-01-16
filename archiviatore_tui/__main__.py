@@ -46,6 +46,7 @@ def main() -> None:
     default_archive = args.archive
     if default_archive == Path("./ARCHIVIO") and cfg.last_archive_root:
         default_archive = Path(cfg.last_archive_root)
+    skip_setup = bool(cfg.last_archive_root) and args.archive == Path("./ARCHIVIO")
     taxonomy_lines = cfg.taxonomy_lines or DEFAULT_TAXONOMY_LINES
     settings = Settings(
         source_root=default_source,
@@ -54,6 +55,9 @@ def main() -> None:
         localai_base_url=args.localai_base_url,
         output_language=cfg.output_language,
         taxonomy_lines=taxonomy_lines,
+        text_model=cfg.text_model,
+        vision_model=cfg.vision_model,
+        skip_initial_setup=skip_setup,
     )
     # Disable mouse tracking so the terminal can do native text selection (copy with mouse).
     ArchiverApp(settings).run(mouse=False)
