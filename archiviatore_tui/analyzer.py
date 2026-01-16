@@ -23,6 +23,7 @@ class AnalysisConfig:
     ollama_base_url: str = "http://localhost:11434"
     output_language: str = "auto"  # auto | it | en
     taxonomy: Taxonomy = _DEFAULT_TAXONOMY
+    filename_separator: str = "space"  # space | underscore | dash
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,8 @@ class AnalysisResult:
     summary: Optional[str] = None
     confidence: Optional[float] = None
     model_used: Optional[str] = None
+    summary_long: Optional[str] = None
+    facts_json: Optional[str] = None
 
 
 def _is_year(value: str) -> bool:
@@ -165,6 +168,96 @@ def _sanitize_name(name: str) -> str:
     return name[:180].strip()
 
 
+def _name_separator(kind: str) -> str:
+    return {"space": " ", "underscore": "_", "dash": "-"}.get(kind, " ")
+
+
+_JOIN_BLOCKLIST = {
+    "of",
+    "the",
+    "and",
+    "or",
+    "di",
+    "da",
+    "del",
+    "della",
+    "dei",
+    "delle",
+}
+
+
+def _split_and_repair_tokens(stem: str) -> list[str]:
+    """Split a filename stem into tokens and repair common OCR/encoding artifacts.
+
+    Example artifact: "Mi_iti" -> ["Miiti"] (missing character, but keeps the word together)
+    """
+
+    raw = [t for t in re.split(r"[\\s_\\-]+", stem.strip()) if t]
+    tokens: list[str] = []
+    for t in raw:
+        t2 = re.sub(r"[\\/:*?\"<>|]", " ", t).strip()
+        if t2:
+            tokens.append(t2)
+
+    i = 0
+    while i < len(tokens) - 1:
+        a = tokens[i]
+        b = tokens[i + 1]
+        if a.isalpha() and b.isalpha() and b[:1].islower() and len(a) <= 3 and a.lower() not in _JOIN_BLOCKLIST:
+            tokens[i] = a + b
+            del tokens[i + 1]
+            continue
+        i += 1
+    return tokens
+
+
+def _normalize_separators(name: str, *, sep: str) -> str:
+    desired = _name_separator(sep)
+    stem = Path(name).stem
+    ext = Path(name).suffix
+    tokens = _split_and_repair_tokens(stem)
+    if not tokens:
+        return _sanitize_name(stem) + ext
+    if desired == " ":
+        return _sanitize_name(" ".join(tokens)) + ext
+    return _sanitize_name(desired.join(tokens)) + ext
+
+
+def _name_token_count(name: str) -> int:
+    return len(re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]+", Path(name).stem))
+
+
+def _coerce_list(value) -> list[str]:
+    if isinstance(value, list):
+        out: list[str] = []
+        for v in value:
+            if isinstance(v, str) and v.strip():
+                out.append(v.strip())
+        return out
+    return []
+
+
+def _coerce_date_candidates(value) -> list[dict]:
+    out: list[dict] = []
+    if not isinstance(value, list):
+        return out
+    for v in value:
+        if not isinstance(v, dict):
+            continue
+        year = v.get("year")
+        if isinstance(year, str) and _is_year(year.strip()):
+            typ = v.get("type")
+            conf = v.get("confidence")
+            out.append(
+                {
+                    "year": year.strip(),
+                    "type": typ if isinstance(typ, str) and typ.strip() else "other",
+                    "confidence": float(conf) if isinstance(conf, (int, float)) else None,
+                }
+            )
+    return out
+
+
 def _ensure_extension(proposed_name: str, original_filename: str) -> str:
     original_ext = Path(original_filename).suffix
     if not original_ext:
@@ -265,7 +358,7 @@ def _cleanup_generic_words_in_name(*, proposed_name: str, original_filename: str
     original_ext = Path(original_filename).suffix
     ext = Path(proposed_name).suffix or original_ext
     stem = Path(proposed_name).stem
-    tokens = re.split(r"[\\s_\\-]+", stem.strip())
+    tokens = _split_and_repair_tokens(stem)
     cleaned: list[str] = []
     for t in tokens:
         if not t:
@@ -275,10 +368,10 @@ def _cleanup_generic_words_in_name(*, proposed_name: str, original_filename: str
         cleaned.append(t)
     if not cleaned:
         return _sanitize_name(Path(original_filename).stem) + ext
-    return _sanitize_name("_".join(cleaned)) + ext
+    return _sanitize_name(" ".join(cleaned)) + ext
 
 
-def _fallback_name_from_summary(*, summary: Optional[str], original_filename: str) -> str:
+def _fallback_name_from_summary(*, summary: Optional[str], original_filename: str, sep: str) -> str:
     stem = Path(original_filename).stem
     ext = Path(original_filename).suffix
     if not summary:
@@ -299,7 +392,7 @@ def _fallback_name_from_summary(*, summary: Optional[str], original_filename: st
             break
     if not tokens:
         return _sanitize_name(stem) + ext
-    name = "_".join(tokens)
+    name = _name_separator(sep).join(tokens)
     return _sanitize_name(name) + ext
 
 
@@ -314,6 +407,7 @@ def _classify_from_text(
     category_hint: Optional[str],
     output_language: str,
     taxonomy: Taxonomy,
+    filename_separator: str,
 ) -> AnalysisResult:
     year_hint_line = f"reference_year_hint: {reference_year_hint}" if reference_year_hint else "reference_year_hint: null"
     category_hint_line = f"category_hint: {category_hint}" if category_hint else "category_hint: null"
@@ -336,10 +430,13 @@ Goal:
 - if category_hint is present, you may use it unless the content clearly indicates a different category
 - estimate the reference year (reference_year) the document refers to
 - estimate the production year (production_year) (if unknown: null)
-- propose a meaningful, descriptive file name (proposed_name)
+- extract structured facts for later normalization (language, doc_type, tags, people, organizations, date candidates)
+- write a richer summary_long (4-10 sentences)
+- propose a meaningful, descriptive file name (proposed_name) using words separated by spaces (not underscores)
   - use 6-12 words when possible (not too short)
-  - include key entities (company/person), document type, and month/period if present
+  - include key entities (company/person), and month/period if present
   - do NOT include category/year unless there is no other useful info
+  - do NOT include generic words like "this document", "text", "image"
   - keep it readable (avoid random IDs)
 - {language_line}
 - if unsure, set low confidence and provide skip_reason
@@ -355,6 +452,13 @@ content:
 
 Output JSON schema:
 {{
+  "language": "it"|"en"|"unknown",
+  "doc_type": string,
+  "tags": string[],
+  "people": string[],
+  "organizations": string[],
+  "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number}}],
+  "summary_long": string,
   "summary": string,
   "category": string,
   "reference_year": string|null,
@@ -395,10 +499,24 @@ Output JSON schema:
 
     proposed_name = _ensure_extension(_sanitize_name(proposed_name), filename)
     proposed_name = _cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
+    proposed_name = _normalize_separators(proposed_name, sep=filename_separator)
 
     summary = data.get("summary")
     if not isinstance(summary, str):
         summary = None
+    summary_long = data.get("summary_long")
+    if not isinstance(summary_long, str) or not summary_long.strip():
+        summary_long = None
+
+    facts = {
+        "language": data.get("language") if isinstance(data.get("language"), str) else None,
+        "doc_type": data.get("doc_type") if isinstance(data.get("doc_type"), str) else None,
+        "tags": _coerce_list(data.get("tags")),
+        "people": _coerce_list(data.get("people")),
+        "organizations": _coerce_list(data.get("organizations")),
+        "date_candidates": _coerce_date_candidates(data.get("date_candidates")),
+    }
+    facts_json = json.dumps(facts, ensure_ascii=False, sort_keys=True)
 
     confidence = data.get("confidence")
     if isinstance(confidence, (int, float)):
@@ -410,9 +528,10 @@ Output JSON schema:
         return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf, model_used=model)
 
     # If the proposed name is too short / low-signal, derive one from summary.
-    if len(Path(proposed_name).stem) < 12 or Path(proposed_name).stem.count("_") < 1:
-        proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename)
+    if len(Path(proposed_name).stem) < 12 or _name_token_count(proposed_name) < 3:
+        proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename, sep=filename_separator)
         proposed_name = _cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
+        proposed_name = _normalize_separators(proposed_name, sep=filename_separator)
 
     # If category is unknown, fall back to hint.
     if category == "unknown" and category_hint in categories:
@@ -442,6 +561,8 @@ Output JSON schema:
         summary=(summary or "").strip()[:200] or None,
         confidence=conf,
         model_used=model,
+        summary_long=(summary_long or "").strip()[:4000] or None,
+        facts_json=facts_json,
     )
 
 def _text_model_candidates(cfg: AnalysisConfig) -> tuple[str, ...]:
@@ -477,6 +598,7 @@ def _try_text_models(
             category_hint=category_hint,
             output_language=cfg.output_language,
             taxonomy=cfg.taxonomy,
+            filename_separator=cfg.filename_separator,
         )
         last = res
         if res.status == "ready":

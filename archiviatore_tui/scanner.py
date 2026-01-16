@@ -22,6 +22,8 @@ class ScanItem:
     confidence: Optional[float] = None
     analysis_time_s: Optional[float] = None
     model_used: Optional[str] = None
+    summary_long: Optional[str] = None
+    facts_json: Optional[str] = None
 
 
 def _infer_kind(path: Path) -> Optional[str]:

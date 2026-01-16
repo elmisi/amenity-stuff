@@ -22,6 +22,8 @@ class CacheEntry:
     confidence: Optional[float] = None
     analysis_time_s: Optional[float] = None
     model_used: Optional[str] = None
+    summary_long: Optional[str] = None
+    facts_json: Optional[str] = None
 
 
 class CacheStore:
@@ -57,6 +59,8 @@ class CacheStore:
                     confidence=entry.get("confidence"),
                     analysis_time_s=entry.get("analysis_time_s"),
                     model_used=entry.get("model_used"),
+                    summary_long=entry.get("summary_long"),
+                    facts_json=entry.get("facts_json"),
                 )
             except Exception:
                 continue
@@ -97,6 +101,8 @@ class CacheStore:
             confidence=item.confidence,
             analysis_time_s=item.analysis_time_s,
             model_used=item.model_used,
+            summary_long=item.summary_long,
+            facts_json=item.facts_json,
         )
 
     def invalidate(self, item: ScanItem) -> None:

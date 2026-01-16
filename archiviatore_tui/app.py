@@ -176,6 +176,8 @@ class ArchiverApp(App):
             reference_year=None,
             proposed_name=None,
             summary=None,
+            summary_long=None,
+            facts_json=None,
             confidence=None,
             analysis_time_s=None,
             model_used=None,
@@ -216,6 +218,8 @@ class ArchiverApp(App):
                 reference_year=None,
                 proposed_name=None,
                 summary=None,
+                summary_long=None,
+                facts_json=None,
                 confidence=None,
                 analysis_time_s=None,
                 model_used=None,
@@ -328,6 +332,8 @@ class ArchiverApp(App):
                     if isinstance(cached.analysis_time_s, (int, float))
                     else None,
                     model_used=cached.model_used if isinstance(cached.model_used, str) else None,
+                    summary_long=cached.summary_long if isinstance(cached.summary_long, str) else None,
+                    facts_json=cached.facts_json if isinstance(cached.facts_json, str) else None,
                 )
         self._render_files()
         self._render_notes()
@@ -397,6 +403,7 @@ class ArchiverApp(App):
                 taxonomy=taxonomy,
                 text_models=text_models,
                 vision_models=vision_models,
+                filename_separator=self.settings.filename_separator,
             )
             worker = get_current_worker()
             for it in list(self._scan_items):
@@ -420,6 +427,8 @@ class ArchiverApp(App):
                     confidence=res.confidence,
                     analysis_time_s=elapsed,
                     model_used=res.model_used,
+                    summary_long=res.summary_long,
+                    facts_json=res.facts_json,
                 )
                 self.call_from_thread(apply_result, path_str, updated)
             self.call_from_thread(finish, worker.is_cancelled)
@@ -445,6 +454,8 @@ class ArchiverApp(App):
             reference_year=None,
             proposed_name=None,
             summary=None,
+            summary_long=None,
+            facts_json=None,
             confidence=None,
             analysis_time_s=None,
             model_used=None,
@@ -472,6 +483,7 @@ class ArchiverApp(App):
                 taxonomy=taxonomy,
                 text_models=text_models,
                 vision_models=vision_models,
+                filename_separator=self.settings.filename_separator,
             )
             t0 = time.perf_counter()
             res = analyze_item(reset, config=cfg)
@@ -487,6 +499,8 @@ class ArchiverApp(App):
                 confidence=res.confidence,
                 analysis_time_s=elapsed,
                 model_used=res.model_used,
+                summary_long=res.summary_long,
+                facts_json=res.facts_json,
             )
 
             def apply() -> None:
@@ -575,6 +589,8 @@ class ArchiverApp(App):
                 type_state_cat_year,
                 f"Proposed name: {item.proposed_name or ''}",
                 summary_line,
+                f"Summary long: {(item.summary_long or '').strip()}",
+                f"Facts: {(item.facts_json or '').strip()}",
                 f"Reason: {item.reason or ''}",
             ]
         ).strip()
