@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,26 @@ def _shorten_end(text: str, max_width: int) -> str:
     if max_width <= 10 or len(text) <= max_width:
         return text
     return text[: max_width - 1] + "…"
+
+
+def _wrap_field(*, label: str, value: str, width: int) -> list[str]:
+    clean = " ".join((value or "").strip().split())
+    prefix = f"{label}: "
+    if not clean:
+        return [prefix.rstrip()]
+    wrapped = textwrap.wrap(
+        clean,
+        width=max(20, width - len(prefix)),
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    if not wrapped:
+        return [prefix.rstrip()]
+    lines = [prefix + wrapped[0]]
+    indent = " " * len(prefix)
+    for w in wrapped[1:]:
+        lines.append(indent + w)
+    return lines
 
 
 def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | None = None, max_lines: int | None = None) -> str:
@@ -50,27 +71,27 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
         extra_bits.append(f"Model: {item.model_used}")
     perf_line = " • ".join(extra_bits) if extra_bits else ""
 
-    summary = (item.summary or "").strip()
-    if summary:
-        summary_line = f"Summary: {summary}"
-    else:
-        summary_line = "Summary:"
-
-    lines = [
-        f"File: {abs_path}",
-        meta_line,
-        perf_line,
-        f"Proposed name: {item.proposed_name or ''}",
-        summary_line,
-        f"Summary long: {(item.summary_long or '').strip()}",
-        f"Reason: {item.reason or ''}",
-    ]
-    lines = [l for l in lines if l.strip() != ""]
-
     width = max_width or 0
+    lines: list[str] = []
+    lines.append(f"File: {abs_path}")
+    lines.append(meta_line)
+    if perf_line:
+        lines.append(perf_line)
+    lines.append(f"Proposed name: {item.proposed_name or ''}")
+
     if width >= 20:
         lines = [lines[0]] + [_shorten_end(l, width) if len(l) > width else l for l in lines[1:]]
-    text = "\n".join(lines).strip()
+
+    if width < 20:
+        width = 120
+
+    # Display only the richer summary in the details panel (the short summary is kept in data/caches).
+    lines.extend(_wrap_field(label="Summary", value=(item.summary_long or ""), width=width))
+
+    if item.reason:
+        lines.extend(_wrap_field(label="Reason", value=item.reason, width=width))
+
+    text = "\n".join([l for l in lines if l.strip() != ""]).strip()
     if max_lines and max_lines > 0:
         split = text.splitlines()
         if len(split) > max_lines:
