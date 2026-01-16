@@ -267,6 +267,19 @@ def _coerce_date_candidates(value) -> list[dict]:
     return out
 
 
+def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
+    """Keep within a predictable size while preserving high-signal regions.
+
+    Strategy: if too long, keep head + tail (documents often contain totals/ids on the last part).
+    """
+    t = (text or "").strip()
+    if len(t) <= max_chars:
+        return t
+    head = int(max_chars * 0.7)
+    tail = max_chars - head
+    return (t[:head].rstrip() + "\n\n…\n\n" + t[-tail:].lstrip()).strip()
+
+
 def _ensure_extension(proposed_name: str, original_filename: str) -> str:
     original_ext = Path(original_filename).suffix
     if not original_ext:
@@ -810,6 +823,7 @@ You are a document understanding assistant. Reply with VALID JSON only (no extra
 Goal:
 - Extract high-signal facts for later batch classification and coherent renaming.
 - Do NOT classify or propose a filename in this step.
+- Prefer precision over brevity: if a value is present, copy it exactly; do not guess.
 - {language_line}
 
 Inputs:
@@ -831,7 +845,7 @@ Output JSON schema:
   "amounts": [{{"value": number, "currency": string, "raw": string}}],
   "identifiers": [{{"type": string, "value": string}}],
   "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
-  "summary_long": string,
+  "summary_long": string,   // 6-12 sentences, include the most important extracted values (who/what/when/how much/ids)
   "confidence": number,
   "skip_reason": string|null
 }}
@@ -908,11 +922,12 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 )
             return res
         year_hint_text = _extract_year_hint_from_text(text)
+        excerpt = _content_excerpt_for_llm(text, max_chars=14000)
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
         t0 = time.perf_counter()
         res = _extract_facts_from_text(
             model=model,
-            content=text,
+            content=excerpt,
             filename=path.name,
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
