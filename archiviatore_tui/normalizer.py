@@ -300,15 +300,20 @@ def normalize_items(
     by_path: dict[str, dict] = {}
     for batch in _chunk(items, chunk_size):
         payload = []
+        by_input_path = {str(it.path): it for it in batch}
         for it in batch:
+            facts_obj = _parse_facts_json(it.facts_json)
             payload.append(
                 {
                     "path": str(it.path),
                     "kind": it.kind,
-                    "category": it.category,
-                    "reference_year": it.reference_year,
                     "summary_long": it.summary_long,
-                    "facts_json": it.facts_json,
+                    "facts": facts_obj,
+                    "current": {
+                        "category": it.category,
+                        "reference_year": it.reference_year,
+                        "proposed_name": it.proposed_name,
+                    },
                 }
             )
 
@@ -317,9 +322,10 @@ You are a document archiving assistant. Reply with VALID JSON only.
 
 Task:
 - Given a batch of documents described by extracted facts (not the raw file content),
-  improve classification and naming with maximum output quality.
+  classify and rename with maximum output quality.
 - You MAY change category and reference_year if a better choice is supported by the facts.
-- Produce consistent, uniform naming across the batch.
+- Produce consistent, uniform naming across the batch by using coherent templates per document cluster.
+  Example: similar utility bills should share the same naming pattern (same ordering, same fields).
 
 Constraints:
 - category MUST be one of: {list(allowed)}
@@ -344,7 +350,8 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
     "category": string,
     "reference_year": string|null,
     "proposed_name": string,
-    "summary": string
+    "summary": string,
+    "confidence": number|null
   }}
 ]
 """
@@ -362,6 +369,7 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
             path = row.get("path")
             if not isinstance(path, str) or not path:
                 continue
+            src = by_input_path.get(path)
             cat = row.get("category")
             if not isinstance(cat, str) or cat not in allowed:
                 cat = "unknown"
@@ -374,17 +382,24 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
             name = _ensure_extension(_sanitize_name(name.strip()), Path(path).name)
             name = _normalize_separators(name, sep=sep_label)
 
+            cur_facts = _parse_facts_json(src.facts_json) if src else {}
+
+            # If year is missing, prefer a year hint extracted from filename/path (collected in phase 1).
+            if not year:
+                yhint = cur_facts.get("year_hint_filename")
+                if isinstance(yhint, str) and re.fullmatch(r"(19\\d{2}|20\\d{2})", yhint.strip()):
+                    year = yhint.strip()
+
             # If the model output is generic, rebuild deterministically from summary_long + facts_json.
-            if it.summary_long:
-                facts = _parse_facts_json(it.facts_json)
-                orgs = facts.get("organizations") if isinstance(facts.get("organizations"), list) else []
+            if src and src.summary_long:
+                orgs = cur_facts.get("organizations") if isinstance(cur_facts.get("organizations"), list) else []
                 org_hint = _short_entity(str(orgs[0])) if orgs else ""
                 low_signal = len(Path(name).stem) < 18 or _name_token_count(name) < 4
                 missing_entity = bool(org_hint) and (org_hint.lower().split()[0] not in name.lower())
                 if low_signal or missing_entity:
                     better = _propose_name_from_summary_and_facts(
-                        summary_long=it.summary_long,
-                        facts_json=it.facts_json,
+                        summary_long=src.summary_long,
+                        facts_json=src.facts_json,
                         reference_year=year,
                         original_filename=Path(path).name,
                         filename_separator=sep_label,
@@ -395,12 +410,15 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
             summary = row.get("summary")
             if not isinstance(summary, str):
                 summary = ""
+            conf = row.get("confidence")
+            conf_out = float(conf) if isinstance(conf, (int, float)) else None
 
             by_path[path] = {
                 "category": cat,
                 "reference_year": year,
                 "proposed_name": name,
                 "summary": summary.strip()[:200] or None,
+                "confidence": conf_out,
                 "model_used": model,
             }
 
