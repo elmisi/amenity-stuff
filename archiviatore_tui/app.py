@@ -3,14 +3,13 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace
-from importlib import metadata
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
 
-from .analyzer import AnalysisConfig, analyze_item
+from .analyzer import analyze_item
 from .cache import CacheStore
 from .config import AppConfig, save_config
 from .confirm_screen import ConfirmResult, ConfirmScreen
@@ -21,6 +20,11 @@ from .settings import Settings
 from .settings_screen import SettingsResult, SettingsScreen
 from .setup_screen import SetupResult, SetupScreen
 from .taxonomy import parse_taxonomy_lines
+from .ui_status import app_title, notes_line, provider_summary, status_cell
+from .model_selection import pick_model_candidates
+from .task_builders import build_analysis_config
+from .ui_details import render_details
+from .task_state import TaskState
 
 
 class ArchiverApp(App):
@@ -52,19 +56,16 @@ class ArchiverApp(App):
         self._discovery: DiscoveryResult | None = None
         self._scan_items: list[ScanItem] = []
         self._scan_index_by_path: dict[str, int] = {}
-        self._analysis_running: bool = False
-        self._analysis_worker = None
-        self._analysis_cancel_requested: bool = False
+        self._analysis_task = TaskState()
         self._cache: CacheStore | None = None
-        self._scan_running: bool = False
-        self._scan_worker = None
+        self._scan_task = TaskState()
         self._provider_line: str = ""
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="top"):
             with Horizontal():
-                yield Static(_app_title(), id="title")
+                yield Static(app_title(), id="title")
                 yield Static(f"Source: {self.settings.source_root}", id="src")
                 yield Static(f"Archive: {self.settings.archive_root}", id="arc")
                 yield Static(f"Max: {self.settings.max_files}", id="max")
@@ -159,17 +160,13 @@ class ArchiverApp(App):
         await self._run_normalize_ready()
 
     async def action_stop_analysis(self) -> None:
-        if not self._analysis_running or self._analysis_worker is None:
+        if not self._analysis_task.running or self._analysis_task.worker is None:
             return
-        self._analysis_cancel_requested = True
-        try:
-            self._analysis_worker.cancel()
-        except Exception:
-            pass
+        self._analysis_task.request_cancel()
         self._render_notes()
 
     async def action_reset_row(self) -> None:
-        if self._analysis_running or self._scan_running:
+        if self._analysis_task.running or self._scan_task.running:
             return
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -205,7 +202,7 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def action_reset_all(self) -> None:
-        if self._analysis_running or self._scan_running:
+        if self._analysis_task.running or self._scan_task.running:
             return
         self.push_screen(
             ConfirmScreen(message="Reset ALL files and clear cache?"),
@@ -249,9 +246,9 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def action_settings(self) -> None:
-        if self._analysis_running:
+        if self._analysis_task.running:
             return
-        if self._scan_running:
+        if self._scan_task.running:
             return
         available_models: tuple[str, ...] = ()
         if self._discovery:
@@ -309,8 +306,8 @@ class ArchiverApp(App):
 
         worker = self.run_worker(do_discover, thread=True)
         self._discovery = await worker.wait()
-        self._provider_line = _provider_summary(self._discovery, self.settings)
-        self.query_one("#title", Static).update(_app_title(provider_line=self._provider_line))
+        self._provider_line = provider_summary(self._discovery, self.settings, model_picker=pick_model_candidates)
+        self.query_one("#title", Static).update(app_title(provider_line=self._provider_line))
         self._render_notes()
 
     async def _run_scan(self) -> None:
@@ -330,12 +327,10 @@ class ArchiverApp(App):
             )
 
         worker = self.run_worker(do_scan, thread=True, exclusive=True)
-        self._scan_worker = worker
-        self._scan_running = True
+        self._scan_task.start(worker)
         self._render_notes()
         self._scan_items = await worker.wait()
-        self._scan_running = False
-        self._scan_worker = None
+        self._scan_task.finish()
         if self._cache:
             for idx, it in enumerate(list(self._scan_items)):
                 cached = self._cache.get_matching(it)
@@ -367,12 +362,12 @@ class ArchiverApp(App):
         self._update_details_from_cursor()
 
     async def _run_analyze_pending(self) -> None:
-        if self._analysis_running:
+        if self._analysis_task.running:
             return
-        if self._scan_running:
+        if self._scan_task.running:
             return
-        self._analysis_cancel_requested = False
-        self._analysis_running = True
+        self._analysis_task.cancel_requested = False
+        self._analysis_task.running = True
         self._render_notes()
 
         files = self.query_one("#files", DataTable)
@@ -385,7 +380,7 @@ class ArchiverApp(App):
             if it.status != "pending":
                 return
             self._scan_items[idx] = replace(it, status="analysis", reason=None)
-            files.update_cell(path_str, "status", _status_cell("analysis"))
+            files.update_cell(path_str, "status", status_cell("analysis"))
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -394,7 +389,7 @@ class ArchiverApp(App):
             if idx is None:
                 return
             self._scan_items[idx] = new_item
-            files.update_cell(path_str, "status", _status_cell(new_item.status))
+            files.update_cell(path_str, "status", status_cell(new_item.status))
             files.update_cell(path_str, "category", new_item.category or "")
             files.update_cell(path_str, "year", new_item.reference_year or "")
             if files.cursor_row == idx:
@@ -411,28 +406,13 @@ class ArchiverApp(App):
                     updated = replace(it, status="pending", reason="Analysis stopped")
                     self._scan_items[idx] = updated
                     key = str(updated.path)
-                    files.update_cell(key, "status", _status_cell("pending"))
-            self._analysis_running = False
+                    files.update_cell(key, "status", status_cell("pending"))
+            self._analysis_task.running = False
             self._render_notes()
 
         def do_analyze_background() -> None:
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
-            text_models, vision_models = _pick_model_candidates(self._discovery)
-            if self.settings.text_model and self.settings.text_model != "auto":
-                text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
-            if self.settings.vision_model and self.settings.vision_model != "auto":
-                vision_models = (
-                    self.settings.vision_model,
-                    *tuple(m for m in vision_models if m != self.settings.vision_model),
-                )
-            cfg = AnalysisConfig(
-                output_language=self.settings.output_language,
-                taxonomy=taxonomy,
-                text_models=text_models,
-                vision_models=vision_models,
-                filename_separator=self.settings.filename_separator,
-                ocr_mode=self.settings.ocr_mode,
-            )
+            cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             worker = get_current_worker()
             for it in list(self._scan_items):
                 if worker.is_cancelled:
@@ -466,15 +446,16 @@ class ArchiverApp(App):
                 self.call_from_thread(apply_result, path_str, updated)
             self.call_from_thread(finish, worker.is_cancelled)
 
-        self._analysis_worker = self.run_worker(do_analyze_background, thread=True, exclusive=True)
+        worker = self.run_worker(do_analyze_background, thread=True, exclusive=True)
+        self._analysis_task.worker = worker
 
     async def _run_normalize_ready(self) -> None:
-        if self._analysis_running or self._scan_running:
+        if self._analysis_task.running or self._scan_task.running:
             return
         if not self._discovery:
             return
         taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
-        text_models, _ = _pick_model_candidates(self._discovery)
+        text_models, _ = pick_model_candidates(self._discovery)
         if self.settings.text_model and self.settings.text_model != "auto":
             text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
         model = text_models[0] if text_models else "qwen2.5:7b-instruct"
@@ -483,8 +464,8 @@ class ArchiverApp(App):
         if not targets:
             return
 
-        self._analysis_cancel_requested = False
-        self._analysis_running = True
+        self._analysis_task.cancel_requested = False
+        self._analysis_task.running = True
         self._render_notes()
 
         files = self.query_one("#files", DataTable)
@@ -497,7 +478,7 @@ class ArchiverApp(App):
             if it.status not in {"ready", "normalized"}:
                 return
             self._scan_items[idx] = replace(it, status="normalizing", reason=None)
-            files.update_cell(path_str, "status", _status_cell("normalizing"))
+            files.update_cell(path_str, "status", status_cell("normalizing"))
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -506,7 +487,7 @@ class ArchiverApp(App):
             if idx is None:
                 return
             self._scan_items[idx] = updated
-            files.update_cell(path_str, "status", _status_cell(updated.status))
+            files.update_cell(path_str, "status", status_cell(updated.status))
             files.update_cell(path_str, "category", updated.category or "")
             files.update_cell(path_str, "year", updated.reference_year or "")
             if files.cursor_row == idx:
@@ -523,8 +504,8 @@ class ArchiverApp(App):
                     updated = replace(it, status="ready", reason="Normalization stopped")
                     self._scan_items[idx] = updated
                     key = str(updated.path)
-                    files.update_cell(key, "status", _status_cell("ready"))
-            self._analysis_running = False
+                    files.update_cell(key, "status", status_cell("ready"))
+            self._analysis_task.running = False
             self._render_notes()
 
         def do_normalize_background() -> None:
@@ -586,10 +567,11 @@ class ArchiverApp(App):
                 self.call_from_thread(apply_norm, key, updated)
             self.call_from_thread(finish, worker.is_cancelled)
 
-        self._analysis_worker = self.run_worker(do_normalize_background, thread=True, exclusive=True)
+        worker = self.run_worker(do_normalize_background, thread=True, exclusive=True)
+        self._analysis_task.worker = worker
 
     async def _run_analyze_row(self, *, force: bool) -> None:
-        if self._analysis_running or self._scan_running:
+        if self._analysis_task.running or self._scan_task.running:
             return
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -622,28 +604,13 @@ class ArchiverApp(App):
         path_str = str(reset.path)
         mark_item = replace(reset, status="analysis", reason=None)
         self._scan_items[row_index] = mark_item
-        files.update_cell(path_str, "status", _status_cell("analysis"))
+        files.update_cell(path_str, "status", status_cell("analysis"))
         self._update_details(row_index)
         self._render_notes()
 
         def do_one() -> None:
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
-            text_models, vision_models = _pick_model_candidates(self._discovery)
-            if self.settings.text_model and self.settings.text_model != "auto":
-                text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
-            if self.settings.vision_model and self.settings.vision_model != "auto":
-                vision_models = (
-                    self.settings.vision_model,
-                    *tuple(m for m in vision_models if m != self.settings.vision_model),
-                )
-            cfg = AnalysisConfig(
-                output_language=self.settings.output_language,
-                taxonomy=taxonomy,
-                text_models=text_models,
-                vision_models=vision_models,
-                filename_separator=self.settings.filename_separator,
-                ocr_mode=self.settings.ocr_mode,
-            )
+            cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             t0 = time.perf_counter()
             res = analyze_item(reset, config=cfg)
             elapsed = time.perf_counter() - t0
@@ -672,7 +639,7 @@ class ArchiverApp(App):
                 if idx is None:
                     return
                 self._scan_items[idx] = updated
-                files.update_cell(path_str, "status", _status_cell(updated.status))
+                files.update_cell(path_str, "status", status_cell(updated.status))
                 files.update_cell(path_str, "category", updated.category or "")
                 files.update_cell(path_str, "year", updated.reference_year or "")
                 self._update_details(idx)
@@ -701,7 +668,7 @@ class ArchiverApp(App):
             year = item.reference_year or ""
             key = str(item.path)
             self._scan_index_by_path[key] = idx
-            files.add_row(_status_cell(item.status), item.kind, rel, cat, year, key=key)
+            files.add_row(status_cell(item.status), item.kind, rel, cat, year, key=key)
 
         if files.row_count:
             if prev_row < 0 or prev_row >= files.row_count:
@@ -720,52 +687,7 @@ class ArchiverApp(App):
         if row_index < 0 or row_index >= len(self._scan_items):
             return
         item = self._scan_items[row_index]
-        abs_path = str(item.path)
-        rel_path = abs_path
-        source_root = str(self.settings.source_root.expanduser().resolve())
-        try:
-            rel_path = str(item.path.relative_to(source_root))
-        except Exception:
-            pass
-        type_state_cat_year = " • ".join(
-            [
-                f"Type: {item.kind}",
-                f"Status: {item.status}",
-                f"Category: {item.category or ''}",
-                f"Year: {item.reference_year or ''}",
-            ]
-        )
-        extra_bits: list[str] = []
-        if isinstance(item.analysis_time_s, (int, float)):
-            extra_bits.append(f"Elab: {item.analysis_time_s:.1f}s")
-        if isinstance(item.extract_time_s, (int, float)) and item.extract_method:
-            ext = f"Extract: {item.extract_method} {item.extract_time_s:.1f}s"
-            if item.extract_method == "ocr" and isinstance(item.ocr_time_s, (int, float)):
-                ext += f" (OCR {item.ocr_time_s:.1f}s{', ' + item.ocr_mode if item.ocr_mode else ''})"
-            extra_bits.append(ext)
-        if isinstance(item.llm_time_s, (int, float)):
-            extra_bits.append(f"LLM: {item.llm_time_s:.1f}s")
-        if item.model_used:
-            extra_bits.append(f"Model: {item.model_used}")
-        if extra_bits:
-            type_state_cat_year = type_state_cat_year + " • " + " • ".join(extra_bits)
-        summary = (item.summary or "").strip()
-        if summary:
-            summary_line = f"Summary: {summary}"
-        else:
-            summary_line = "Summary:"
-        text = "\n".join(
-            [
-                f"File: {abs_path}",
-                type_state_cat_year,
-                f"Proposed name: {item.proposed_name or ''}",
-                summary_line,
-                f"Summary long: {(item.summary_long or '').strip()}",
-                f"Facts: {(item.facts_json or '').strip()}",
-                f"Reason: {item.reason or ''}",
-            ]
-        ).strip()
-        self.query_one("#details_text", Static).update(text)
+        self.query_one("#details_text", Static).update(render_details(item, settings=self.settings))
 
     def _render_notes(self) -> None:
         pending = sum(1 for i in self._scan_items if i.status == "pending")
@@ -778,8 +700,8 @@ class ArchiverApp(App):
         total = len(self._scan_items)
 
         state = "idle"
-        if self._analysis_running:
-            if self._analysis_cancel_requested:
+        if self._analysis_task.running:
+            if self._analysis_task.cancel_requested:
                 state = "stopping…"
             elif normalizing:
                 state = "normalizing…"
@@ -787,130 +709,19 @@ class ArchiverApp(App):
                 state = "analyzing…"
             else:
                 state = "running…"
-        if self._scan_running:
+        if self._scan_task.running:
             state = "scanning…"
 
-        bits = [
-            f"files: {total}" if total else "files: 0",
-            f"pending: {pending}",
-            f"analyzing: {analysis}",
-            f"ready: {ready}",
-            f"normalizing: {normalizing}",
-            f"normalized: {normalized}",
-            f"skipped: {skipped}",
-            f"error: {err}",
-            f"task: {state}",
-        ]
-        self.query_one("#notes", Static).update(" • ".join([b for b in bits if b]))
-
-
-def _status_cell(status: str) -> str:
-    marker = {
-        "pending": "·",
-        "analysis": "…",
-        "ready": "✓",
-        "normalizing": "≈",
-        "normalized": "★",
-        "skipped": "↷",
-        "error": "×",
-    }.get(status, "?")
-    short = {
-        "pending": "pend",
-        "analysis": "anl",
-        "ready": "ready",
-        "normalizing": "norm",
-        "normalized": "done",
-        "skipped": "skip",
-        "error": "err",
-    }.get(status, status[:4])
-    return f"{marker} {short}"
-
-def _app_title(*, provider_line: str = "") -> str:
-    try:
-        ver = metadata.version("amenity-stuff")
-    except Exception:
-        ver = "dev"
-    base = f"amenity-stuff v{ver}"
-    if provider_line:
-        return f"{base} • {provider_line}"
-    return base
-
-
-def _provider_summary(discovery: DiscoveryResult | None, settings: Settings) -> str:
-    if not discovery:
-        return ""
-    provider = None
-    models: tuple[str, ...] = ()
-    for p in discovery.providers:
-        if p.name == "ollama":
-            provider = "ollama" if p.available else "ollama(missing)"
-            models = p.models
-            break
-    if not provider:
-        return ""
-
-    text_models, vision_models = _pick_model_candidates(discovery)
-    if settings.text_model and settings.text_model != "auto":
-        text = settings.text_model
-    else:
-        text = text_models[0] if text_models else "auto"
-    if settings.vision_model and settings.vision_model != "auto":
-        vision = settings.vision_model
-    else:
-        vision = vision_models[0] if vision_models else "auto"
-    models_count = f"{len(models)} models" if models else "no models"
-    return f"{provider} • {models_count} • text={text} • vision={vision}"
-
-
-def _pick_model_candidates(discovery: DiscoveryResult | None) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    models: list[str] = []
-    if discovery:
-        for p in discovery.providers:
-            if p.name == "ollama" and p.available and p.models:
-                models = list(p.models)
-                break
-
-    if not models:
-        return (), ()
-
-    lower = [m.lower() for m in models]
-
-    def has(sub: str) -> list[str]:
-        return [m for m in models if sub in m.lower()]
-
-    known_text_prefer = [
-        "qwen2.5:7b-instruct",
-        "qwen2.5:14b-instruct",
-        "llama3.1:8b-instruct",
-        "llama3.2:3b-instruct",
-        "mistral:7b-instruct",
-        "gemma2:9b-instruct",
-        "phi3:medium",
-    ]
-    text_candidates: list[str] = [m for m in known_text_prefer if m in models]
-    for m in models:
-        ml = m.lower()
-        if m in text_candidates:
-            continue
-        if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
-            continue
-        if "instruct" in ml or "chat" in ml:
-            text_candidates.append(m)
-
-    # Vision candidates.
-    known_vision_prefer = [
-        "moondream:latest",
-        "llama3.2-vision:latest",
-        "llava:latest",
-        "bakllava:latest",
-        "minicpm-v:latest",
-    ]
-    vision_candidates: list[str] = [m for m in known_vision_prefer if m in models]
-    for m in models:
-        ml = m.lower()
-        if m in vision_candidates:
-            continue
-        if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
-            vision_candidates.append(m)
-
-    return tuple(text_candidates[:4]), tuple(vision_candidates[:3])
+        self.query_one("#notes", Static).update(
+            notes_line(
+                scan_items_total=total,
+                pending=pending,
+                analyzing=analysis,
+                ready=ready,
+                normalizing=normalizing,
+                normalized=normalized,
+                skipped=skipped,
+                error=err,
+                task_state=state,
+            )
+        )

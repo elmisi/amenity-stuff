@@ -9,6 +9,8 @@ from typing import Optional
 from .ollama_client import generate
 from .scanner import ScanItem
 from .taxonomy import Taxonomy, taxonomy_to_prompt_block
+from .utils_filename import sanitize_name
+from .utils_json import extract_json_any
 
 
 @dataclass(frozen=True)
@@ -19,29 +21,11 @@ class NormalizationResult:
 
 
 def _extract_json(text: str) -> Optional[object]:
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    match = re.search(r"\\[.*\\]", text, flags=re.DOTALL)
-    if not match:
-        match = re.search(r"\\{.*\\}", text, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
+    return extract_json_any(text)
 
 
 def _sanitize_name(name: str) -> str:
-    name = (name or "").strip()
-    name = re.sub(r"[\\/:*?\"<>|]", " ", name)
-    name = re.sub(r"\\s+", " ", name)
-    return name[:180].strip()
+    return sanitize_name(name)
 
 
 def _name_separator(kind: str) -> str:
@@ -185,4 +169,3 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
             }
 
     return NormalizationResult(by_path=by_path, model_used=model)
-

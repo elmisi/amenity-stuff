@@ -12,6 +12,8 @@ import time
 from .pdf_extract import extract_pdf_text_with_meta
 from .scanner import ScanItem
 from .taxonomy import DEFAULT_TAXONOMY_LINES, Taxonomy, parse_taxonomy_lines, taxonomy_to_prompt_block
+from .utils_filename import sanitize_name
+from .utils_json import extract_json_dict
 
 _DEFAULT_TAXONOMY, _ = parse_taxonomy_lines(DEFAULT_TAXONOMY_LINES)
 
@@ -153,27 +155,11 @@ def _category_hint_from_signals(*, path: Path, text: Optional[str]) -> Optional[
 
 
 def _extract_json(text: str) -> Optional[dict]:
-    text = text.strip()
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
+    return extract_json_dict(text)
 
 
 def _sanitize_name(name: str) -> str:
-    name = name.strip()
-    name = re.sub(r"[\\/:*?\"<>|]", " ", name)
-    name = re.sub(r"\s+", " ", name)
-    return name[:180].strip()
+    return sanitize_name(name)
 
 
 def _name_separator(kind: str) -> str:
