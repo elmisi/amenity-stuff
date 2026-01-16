@@ -879,9 +879,17 @@ def _extract_facts_from_text(
 
     level = (detail_level or "fast").lower()
     if level == "deep":
-        summary_line = '  "summary_long": string,   // 8-14 sentences, include the most important extracted values (who/what/when/how much/ids)'
+        key_list = (
+            "language, doc_type, purpose, tags, people, organizations, addresses, amounts, identifiers, "
+            "date_candidates, summary_long, confidence, skip_reason"
+        )
+        summary_hint = "6-10 sentences"
+        include_addresses = True
     else:
-        summary_line = '  "summary_long": string,   // 3-6 sentences, include the most important extracted values (who/what/when/how much/ids)'
+        # Keep the fast pass small to avoid JSON truncation and reduce latency.
+        key_list = "language, doc_type, purpose, tags, people, organizations, amounts, date_candidates, summary_long, confidence, skip_reason"
+        summary_hint = "2-4 sentences"
+        include_addresses = False
 
     prompt = f"""
 You are a document understanding assistant. Reply with VALID JSON only (no extra text).
@@ -901,20 +909,21 @@ content:
 \"\"\"{content}\"\"\"
 
 Return a single JSON object with exactly these keys:
-language, doc_type, purpose, tags, people, organizations, addresses, amounts, identifiers, date_candidates, summary_long, confidence, skip_reason.
+{key_list}.
 
 Constraints:
 - purpose: 1 sentence (why this document exists)
-- people: string[] (names only, max 5)
-- organizations: string[] (names only, max 5)
-- addresses: string[] (max 3)
-- amounts: max 3 items, each {{"value": number, "currency": string, "raw": string}}
-- identifiers: max 6 items, each {{"type": string, "value": string}}
-- summary_long: {summary_line.split('//')[1].strip() if '//' in summary_line else ''}
+- people: string[] (names only, max 5) e.g. ["Mario Rossi"]
+- organizations: string[] (names only, max 5) e.g. ["Soris S.P.A.", "Worldline"]
+- tags: string[] (max 8)
+- amounts: max 4 items, each {{"value": number, "currency": string, "raw": string}}
+- date_candidates: max 4 items, each {{"year": "YYYY", "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}
+- summary_long: {summary_hint}, include key values (entities, date, amounts, identifiers if present)
+{"- addresses: string[] (max 3), only if clearly present in the content" if include_addresses else ""}
 """
     try:
         # Limit generated tokens to keep scan fast; deep scan increases the budget.
-        num_predict = 520 if level == "deep" else 260
+        num_predict = 520 if level == "deep" else 220
         used_num_predict = num_predict
         # Retry with higher budget if JSON is truncated / unparseable.
         for attempt in range(2):
@@ -959,7 +968,7 @@ Constraints:
         "tags": _coerce_list(data.get("tags")),
         "people": _coerce_list(data.get("people")),
         "organizations": _coerce_list(data.get("organizations")),
-        "addresses": _coerce_list(data.get("addresses")),
+        "addresses": _coerce_list(data.get("addresses")) if include_addresses else [],
         "amounts": data.get("amounts") if isinstance(data.get("amounts"), list) else [],
         "identifiers": data.get("identifiers") if isinstance(data.get("identifiers"), list) else [],
         "date_candidates": _coerce_date_candidates(data.get("date_candidates")),

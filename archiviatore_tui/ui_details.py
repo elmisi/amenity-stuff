@@ -100,6 +100,8 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
 
     purpose = ""
     evidence_count: int = 0
+    scan_level: str = ""
+    scan_attempts: int = 0
     try:
         if isinstance(item.facts_json, str) and item.facts_json.strip():
             facts = json.loads(item.facts_json)
@@ -107,14 +109,23 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
                 purpose = facts.get("purpose", "").strip()
             if isinstance(facts, dict) and isinstance(facts.get("evidence"), list):
                 evidence_count = len([e for e in facts.get("evidence", []) if isinstance(e, dict)])
+            if isinstance(facts, dict) and isinstance(facts.get("scan_level"), str):
+                scan_level = facts.get("scan_level", "").strip()
+            if isinstance(facts, dict) and isinstance(facts.get("scan_attempts"), int):
+                scan_attempts = facts.get("scan_attempts", 0)
     except Exception:
         purpose = ""
         evidence_count = 0
+        scan_level = ""
+        scan_attempts = 0
 
     if purpose:
         lines.extend(_wrap_field(label="Purpose", value=purpose, width=width))
     if evidence_count:
-        lines.append(f"Evidence: {evidence_count} snippet(s)")
+        extra = f" • scan: {scan_level}" if scan_level else ""
+        if scan_attempts:
+            extra += f" • attempts: {scan_attempts}"
+        lines.append(f"Evidence: {evidence_count} snippet(s){extra}")
 
     # Display only the richer summary in the details panel (the short summary is kept in data/caches).
     lines.extend(_wrap_field(label="Summary", value=(item.summary_long or ""), width=width))
