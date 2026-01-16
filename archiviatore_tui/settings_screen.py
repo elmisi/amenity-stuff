@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Select, Static, TextArea
+from textual.widgets import Footer, Header, Select, Static, TextArea
 
 from .taxonomy import DEFAULT_TAXONOMY_LINES, parse_taxonomy_lines
 
@@ -25,13 +25,14 @@ class SettingsScreen(ModalScreen[SettingsResult]):
     #taxonomy_label { height: auto; padding: 1 0 0 0; }
     #taxonomy { height: 1fr; border: round $accent; }
     #errors { height: auto; color: $error; }
-    #buttons { height: auto; }
+    #help { height: auto; color: $text-muted; }
     """
 
     BINDINGS = [
         ("q", "cancel", "Cancel"),
         ("escape", "cancel", "Cancel"),
         ("ctrl+s", "save", "Save"),
+        ("r", "reset_defaults", "Reset defaults"),
     ]
 
     def __init__(self, *, output_language: str, taxonomy_lines: tuple[str, ...]) -> None:
@@ -41,7 +42,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield Static("Settings", id="intro")
+        yield Static("Settings (Ctrl+S save • Esc cancel • r reset)", id="intro")
 
         with Container(id="form"):
             with Horizontal(id="lang_row"):
@@ -59,10 +60,11 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             yield TextArea("\n".join(self._taxonomy_lines).strip() + "\n", id="taxonomy")
             yield Static("", id="errors")
 
-        with Horizontal(id="buttons"):
-            yield Button("Reset defaults", id="reset")
-            yield Button("Cancel", id="cancel", variant="error")
-            yield Button("Save", id="save", variant="success")
+        yield Static(
+            "Tip: focus Output language and press Enter to open; use arrows. "
+            "In the taxonomy box you can edit text directly.",
+            id="help",
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -74,14 +76,9 @@ class SettingsScreen(ModalScreen[SettingsResult]):
     def action_save(self) -> None:
         self._save()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel":
-            self.action_cancel()
-        elif event.button.id == "reset":
-            self.query_one("#taxonomy", TextArea).text = "\n".join(DEFAULT_TAXONOMY_LINES).strip() + "\n"
-            self.query_one("#errors", Static).update("")
-        elif event.button.id == "save":
-            self._save()
+    def action_reset_defaults(self) -> None:
+        self.query_one("#taxonomy", TextArea).text = "\n".join(DEFAULT_TAXONOMY_LINES).strip() + "\n"
+        self.query_one("#errors", Static).update("")
 
     def _save(self) -> None:
         lang = self.query_one("#lang", Select).value or "auto"
