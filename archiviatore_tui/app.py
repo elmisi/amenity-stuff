@@ -217,6 +217,8 @@ class ArchiverApp(App):
     async def action_settings(self) -> None:
         if self._analysis_running:
             return
+        if self._scan_running:
+            return
         available_models: tuple[str, ...] = ()
         if self._discovery:
             for p in self._discovery.providers:
@@ -229,6 +231,7 @@ class ArchiverApp(App):
                 taxonomy_lines=self.settings.taxonomy_lines,
                 text_model=self.settings.text_model,
                 vision_model=self.settings.vision_model,
+                archive_root=self.settings.archive_root,
                 available_models=available_models,
             ),
             callback=self._on_settings_done,
@@ -236,30 +239,18 @@ class ArchiverApp(App):
         )
 
     def _on_settings_done(self, result: SettingsResult) -> None:
-        if result.request_folder_picker:
-            self.push_screen(
-                SetupScreen(
-                    source_root=self.settings.source_root.expanduser().resolve(),
-                    archive_root=self.settings.archive_root.expanduser().resolve(),
-                ),
-                callback=self._on_folders_done,
-                wait_for_dismiss=False,
-            )
-            return
         self.settings = replace(
             self.settings,
             output_language=result.output_language,
             taxonomy_lines=result.taxonomy_lines,
             text_model=result.text_model,
             vision_model=result.vision_model,
+            archive_root=result.archive_root,
         )
         self.query_one("#lang", Static).update(f"Lang: {self.settings.output_language}")
+        self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
         self._save_app_config()
         self._render_notes()
-
-    def _on_folders_done(self, setup: SetupResult) -> None:
-        self._apply_setup(setup=setup)
-        asyncio.create_task(self._run_scan())
 
     async def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "files":
