@@ -5,7 +5,7 @@ import time
 from dataclasses import replace
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
 
@@ -34,7 +34,7 @@ class ArchiverApp(App):
     #notes { height: auto; color: $text-muted; }
     #files { height: 1fr; }
     #details_box { height: 9; border: round $accent; background: $panel; }
-    #details_text { padding: 1 2; }
+    #details_text { padding: 0 2; }
     """
 
     BINDINGS = [
@@ -82,8 +82,7 @@ class ArchiverApp(App):
         yield files
 
         with Container(id="details_box"):
-            with VerticalScroll():
-                yield Static("", id="details_text")
+            yield Static("", id="details_text")
 
         yield Footer()
 
@@ -687,7 +686,12 @@ class ArchiverApp(App):
         if row_index < 0 or row_index >= len(self._scan_items):
             return
         item = self._scan_items[row_index]
-        self.query_one("#details_text", Static).update(render_details(item, settings=self.settings))
+        details_widget = self.query_one("#details_text", Static)
+        width = details_widget.size.width or (self.size.width - 4)
+        height = details_widget.size.height or 9
+        details_widget.update(
+            render_details(item, settings=self.settings, max_width=max(40, width), max_lines=max(6, height))
+        )
 
     def _render_notes(self) -> None:
         pending = sum(1 for i in self._scan_items if i.status == "pending")

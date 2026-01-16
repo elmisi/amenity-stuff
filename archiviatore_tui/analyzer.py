@@ -186,7 +186,7 @@ def _split_and_repair_tokens(stem: str) -> list[str]:
     Example artifact: "Mi_iti" -> ["Miiti"] (missing character, but keeps the word together)
     """
 
-    raw = [t for t in re.split(r"[\\s_\\-]+", stem.strip()) if t]
+    raw = [t for t in re.split(r"[\s_\-]+", stem.strip()) if t]
     tokens: list[str] = []
     for t in raw:
         t2 = re.sub(r"[\\/:*?\"<>|]", " ", t).strip()
@@ -390,6 +390,159 @@ def _fallback_name_from_summary(*, summary: Optional[str], original_filename: st
     return _sanitize_name(name) + ext
 
 
+_LEGAL_SUFFIXES_RE = re.compile(
+    r"\b(s\.?p\.?a\.?|s\.?r\.?l\.?|srl|spa|inc\.?|llc|ltd\.?|gmbh|s\.?a\.?s\.?)\b",
+    re.IGNORECASE,
+)
+
+
+def _short_entity(entity: str) -> str:
+    e = re.sub(r"[^\w\sÀ-ÖØ-öø-ÿ]", " ", entity).strip()
+    e = _LEGAL_SUFFIXES_RE.sub("", e).strip()
+    e = re.sub(r"\s+", " ", e)
+    parts = [p for p in e.split() if len(p) >= 2]
+    # Drop common leftover suffix tokens after punctuation removal: "S P A", "S R L", etc.
+    drop = {"sp", "spa", "srl", "sa", "sas", "llc", "inc", "ltd", "gmbh"}
+    parts = [p for p in parts if p.lower() not in drop]
+    return " ".join(parts[:3]).strip()
+
+
+_MONTHS = {
+    # it
+    "gennaio": 1,
+    "febbraio": 2,
+    "marzo": 3,
+    "aprile": 4,
+    "maggio": 5,
+    "giugno": 6,
+    "luglio": 7,
+    "agosto": 8,
+    "settembre": 9,
+    "ottobre": 10,
+    "novembre": 11,
+    "dicembre": 12,
+    # en
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
+
+
+def _extract_date_token(text: str) -> Optional[str]:
+    t = text
+    m = re.search(r"(?<!\d)(19\d{2}|20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)", t)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+
+    m = re.search(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](19\d{2}|20\d{2})(?!\d)", t)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+
+    m = re.search(
+        r"(?<!\d)(\d{1,2})\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(19\d{2}|20\d{2})(?!\d)",
+        t,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        d = int(m.group(1))
+        mon_name = m.group(2).strip().lower()
+        y = int(m.group(3))
+        mo = _MONTHS.get(mon_name)
+        if mo:
+            return f"{y:04d}-{mo:02d}-{d:02d}"
+
+    return None
+
+
+def _extract_amount_token(text: str) -> Optional[str]:
+    # Typical: "225,58 €" or "€ 225.58" or "225.58 EUR"
+    m = re.search(r"(€)\s*([0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{2})", text)
+    if m:
+        amount = m.group(2).replace(".", "").replace(",", ".")
+        return f"{amount} EUR"
+    m = re.search(r"([0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{2})\s*(€|eur|euro)", text, flags=re.IGNORECASE)
+    if m:
+        amount = m.group(1).replace(".", "").replace(",", ".")
+        return f"{amount} EUR"
+    return None
+
+
+def _propose_name_from_summary_and_facts(
+    *,
+    summary_long: Optional[str],
+    facts: dict,
+    reference_year: Optional[str],
+    original_filename: str,
+    filename_separator: str,
+) -> Optional[str]:
+    if not summary_long:
+        return None
+
+    doc_type = facts.get("doc_type") if isinstance(facts.get("doc_type"), str) else ""
+    tags = facts.get("tags") if isinstance(facts.get("tags"), list) else []
+    doc_kind = doc_type.strip()
+    if not doc_kind and tags:
+        doc_kind = str(tags[0])
+    doc_kind = re.sub(r"\b(document|documento|file|testo|immagine|image|text)\b", "", doc_kind, flags=re.IGNORECASE)
+    doc_kind = re.sub(r"\s+", " ", doc_kind).strip()
+
+    orgs = facts.get("organizations") if isinstance(facts.get("organizations"), list) else []
+    people = facts.get("people") if isinstance(facts.get("people"), list) else []
+    entity = ""
+    if orgs:
+        entity = _short_entity(str(orgs[0]))
+    elif people:
+        entity = _short_entity(str(people[0]))
+
+    date_token = _extract_date_token(summary_long) or (reference_year if reference_year and _is_year(reference_year) else None)
+    amount_token = _extract_amount_token(summary_long)
+
+    pieces: list[str] = []
+    if doc_kind:
+        pieces.extend(_split_and_repair_tokens(doc_kind)[:4])
+    if entity:
+        pieces.extend(_split_and_repair_tokens(entity)[:3])
+    if date_token:
+        pieces.append(date_token)
+    if amount_token:
+        pieces.extend(_split_and_repair_tokens(amount_token)[:2])
+
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for p in pieces:
+        pl = p.lower()
+        if not pl or pl in _STOPWORDS or pl in _GENERIC_NAME_TOKENS:
+            continue
+        if pl in seen:
+            continue
+        seen.add(pl)
+        cleaned.append(p)
+        if len(cleaned) >= 10:
+            break
+
+    if len(cleaned) < 3:
+        return None
+
+    ext = Path(original_filename).suffix
+    name = _name_separator(filename_separator).join(cleaned)
+    proposed = _sanitize_name(name) + ext
+    proposed = _cleanup_generic_words_in_name(proposed_name=proposed, original_filename=original_filename)
+    proposed = _normalize_separators(proposed, sep=filename_separator)
+    return proposed
+
+
 def _classify_from_text(
     *,
     model: str,
@@ -429,6 +582,7 @@ Goal:
 - propose a meaningful, descriptive file name (proposed_name) using words separated by spaces (not underscores)
   - use 6-12 words when possible (not too short)
   - include key entities (company/person), and month/period if present
+  - copy proper names as-is (do not guess spellings; if uncertain, omit the entity)
   - do NOT include category/year unless there is no other useful info
   - do NOT include generic words like "this document", "text", "image"
   - keep it readable (avoid random IDs)
@@ -520,6 +674,23 @@ Output JSON schema:
 
     if conf is not None and conf < 0.35:
         return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf, model_used=model)
+
+    # If the model produced a generic/low-signal name, rebuild it from summary+facts.
+    if summary_long:
+        orgs = facts.get("organizations") if isinstance(facts.get("organizations"), list) else []
+        org_hint = _short_entity(str(orgs[0])) if orgs else ""
+        low_signal = len(Path(proposed_name).stem) < 18 or _name_token_count(proposed_name) < 4
+        missing_entity = bool(org_hint) and (org_hint.lower().split()[0] not in proposed_name.lower())
+        if low_signal or missing_entity:
+            better = _propose_name_from_summary_and_facts(
+                summary_long=summary_long,
+                facts=facts,
+                reference_year=reference_year,
+                original_filename=filename,
+                filename_separator=filename_separator,
+            )
+            if better:
+                proposed_name = better
 
     # If the proposed name is too short / low-signal, derive one from summary.
     if len(Path(proposed_name).stem) < 12 or _name_token_count(proposed_name) < 3:
