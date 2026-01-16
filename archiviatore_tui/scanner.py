@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,7 @@ def scan_files(
     max_files: int,
     include_extensions: Iterable[str],
     exclude_dirnames: Iterable[str],
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[ScanItem]:
     include = {ext.lower().lstrip(".") for ext in include_extensions}
     exclude_dirs = set(exclude_dirnames)
@@ -70,6 +71,8 @@ def scan_files(
         ]
 
     def consider_file(path: Path) -> None:
+        if should_cancel and should_cancel():
+            return
         if len(items) >= max_files:
             return
         ext = path.suffix.lower().lstrip(".")
@@ -102,6 +105,8 @@ def scan_files(
 
     if not recursive:
         for child in sorted(source_root.iterdir()):
+            if should_cancel and should_cancel():
+                break
             if child.is_file():
                 consider_file(child)
             if len(items) >= max_files:
@@ -109,8 +114,12 @@ def scan_files(
         return items
 
     for dirpath, dirnames, filenames in os.walk(source_root):
+        if should_cancel and should_cancel():
+            break
         dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
         for filename in filenames:
+            if should_cancel and should_cancel():
+                break
             if len(items) >= max_files:
                 break
             consider_file(Path(dirpath) / filename)

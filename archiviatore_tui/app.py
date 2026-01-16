@@ -13,6 +13,7 @@ from textual.worker import get_current_worker
 from .analyzer import AnalysisConfig, analyze_item
 from .cache import CacheStore
 from .config import AppConfig, save_config
+from .confirm_screen import ConfirmResult, ConfirmScreen
 from .discovery import DiscoveryResult, discover_providers
 from .scanner import ScanItem, scan_files
 from .settings import Settings
@@ -34,11 +35,11 @@ class ArchiverApp(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
-        ("s", "rescan", "Rescan"),
-        ("a", "analyze", "Analyze"),
-        ("c", "cancel_analysis", "Stop analysis"),
-        ("R", "reanalyze_row", "Reanalyze row"),
-        ("A", "reanalyze_all", "Reanalyze all"),
+        ("s", "scan_toggle", "Scan"),
+        ("a", "analyze_row", "Analyze row"),
+        ("A", "analyze_pending", "Analyze pending"),
+        ("r", "reset_row", "Reset row"),
+        ("R", "reset_all", "Reset all"),
         ("f2", "settings", "Settings"),
     ]
 
@@ -52,6 +53,8 @@ class ArchiverApp(App):
         self._analysis_worker = None
         self._analysis_cancel_requested: bool = False
         self._cache: CacheStore | None = None
+        self._scan_running: bool = False
+        self._scan_worker = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -136,24 +139,17 @@ class ArchiverApp(App):
         self.query_one("#files", DataTable).focus()
         self._update_details_from_cursor()
 
-    async def action_rescan(self) -> None:
-        await self._run_scan()
+    async def action_scan_toggle(self) -> None:
+        await self._run_scan_toggle()
 
-    async def action_analyze(self) -> None:
-        await self._run_analyze()
+    async def action_analyze_row(self) -> None:
+        await self._run_analyze_row(force=True)
 
-    async def action_cancel_analysis(self) -> None:
-        if not self._analysis_running or self._analysis_worker is None:
-            return
-        self._analysis_cancel_requested = True
-        try:
-            self._analysis_worker.cancel()
-        except Exception:
-            pass
-        self._render_notes()
+    async def action_analyze_pending(self) -> None:
+        await self._run_analyze_pending()
 
-    async def action_reanalyze_row(self) -> None:
-        if self._analysis_running:
+    async def action_reset_row(self) -> None:
+        if self._analysis_running or self._scan_running:
             return
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -181,9 +177,21 @@ class ArchiverApp(App):
         self._update_details_from_cursor()
         self._render_notes()
 
-    async def action_reanalyze_all(self) -> None:
-        if self._analysis_running:
+    async def action_reset_all(self) -> None:
+        if self._analysis_running or self._scan_running:
             return
+        self.push_screen(
+            ConfirmScreen(message="Reset ALL files and clear cache?"),
+            callback=self._on_reset_all_confirmed,
+            wait_for_dismiss=False,
+        )
+
+    def _on_reset_all_confirmed(self, result: ConfirmResult) -> None:
+        if not result.confirmed:
+            return
+        self._reset_all_impl()
+
+    def _reset_all_impl(self) -> None:
         if self._cache:
             self._cache.clear()
             self._cache.save()
@@ -288,10 +296,16 @@ class ArchiverApp(App):
                 max_files=self.settings.max_files,
                 include_extensions=self.settings.include_extensions,
                 exclude_dirnames=self.settings.exclude_dirnames,
+                should_cancel=lambda: bool(get_current_worker().is_cancelled),
             )
 
-        worker = self.run_worker(do_scan, thread=True)
+        worker = self.run_worker(do_scan, thread=True, exclusive=True)
+        self._scan_worker = worker
+        self._scan_running = True
+        self._render_notes()
         self._scan_items = await worker.wait()
+        self._scan_running = False
+        self._scan_worker = None
         if self._cache:
             for idx, it in enumerate(list(self._scan_items)):
                 cached = self._cache.get_matching(it)
@@ -315,8 +329,21 @@ class ArchiverApp(App):
         self._render_notes()
         self._update_details_from_cursor()
 
-    async def _run_analyze(self) -> None:
+    async def _run_scan_toggle(self) -> None:
+        if self._scan_running and self._scan_worker is not None:
+            try:
+                self._scan_worker.cancel()
+            except Exception:
+                pass
+            return
         if self._analysis_running:
+            return
+        await self._run_scan()
+
+    async def _run_analyze_pending(self) -> None:
+        if self._analysis_running:
+            return
+        if self._scan_running:
             return
         self._analysis_cancel_requested = False
         self._analysis_running = True
@@ -408,6 +435,89 @@ class ArchiverApp(App):
             self.call_from_thread(finish, worker.is_cancelled)
 
         self._analysis_worker = self.run_worker(do_analyze_background, thread=True, exclusive=True)
+
+    async def _run_analyze_row(self, *, force: bool) -> None:
+        if self._analysis_running or self._scan_running:
+            return
+        files = self.query_one("#files", DataTable)
+        row_index = files.cursor_row
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        it = self._scan_items[row_index]
+        if self._cache:
+            self._cache.invalidate(it)
+            self._cache.save()
+        reset = replace(
+            it,
+            status="pending" if force else it.status,
+            reason=None,
+            category=None,
+            reference_year=None,
+            proposed_name=None,
+            summary=None,
+            confidence=None,
+            analysis_time_s=None,
+            model_used=None,
+        )
+        self._scan_items[row_index] = reset
+        path_str = str(reset.path)
+        mark_item = replace(reset, status="analysis", reason=None)
+        self._scan_items[row_index] = mark_item
+        files.update_cell(path_str, "status", _status_cell("analysis"))
+        files.update_cell(path_str, "reason", "")
+        self._update_details(row_index)
+        self._render_notes()
+
+        def do_one() -> None:
+            taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+            text_models, vision_models = _pick_model_candidates(self._discovery)
+            if self.settings.text_model and self.settings.text_model != "auto":
+                text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
+            if self.settings.vision_model and self.settings.vision_model != "auto":
+                vision_models = (
+                    self.settings.vision_model,
+                    *tuple(m for m in vision_models if m != self.settings.vision_model),
+                )
+            cfg = AnalysisConfig(
+                output_language=self.settings.output_language,
+                taxonomy=taxonomy,
+                text_models=text_models,
+                vision_models=vision_models,
+            )
+            t0 = time.perf_counter()
+            res = analyze_item(reset, config=cfg)
+            elapsed = time.perf_counter() - t0
+            updated = replace(
+                reset,
+                status=res.status,
+                reason=res.reason,
+                category=res.category,
+                reference_year=res.reference_year,
+                proposed_name=res.proposed_name,
+                summary=res.summary,
+                confidence=res.confidence,
+                analysis_time_s=elapsed,
+                model_used=res.model_used,
+            )
+
+            def apply() -> None:
+                idx = self._scan_index_by_path.get(path_str)
+                if idx is None:
+                    return
+                self._scan_items[idx] = updated
+                files.update_cell(path_str, "status", _status_cell(updated.status))
+                files.update_cell(path_str, "category", updated.category or "")
+                files.update_cell(path_str, "year", updated.reference_year or "")
+                files.update_cell(path_str, "reason", updated.reason or "")
+                self._update_details(idx)
+                if self._cache:
+                    self._cache.upsert(updated)
+                    self._cache.save()
+                self._render_notes()
+
+            self.call_from_thread(apply)
+
+        self.run_worker(do_one, thread=True, exclusive=True)
 
     def _render_files(self) -> None:
         files = self.query_one("#files", DataTable)
@@ -503,6 +613,8 @@ class ArchiverApp(App):
         state = "idle"
         if self._analysis_running:
             state = "stopping…" if self._analysis_cancel_requested else "running…"
+        if self._scan_running:
+            state = "scanning…"
 
         bits = [
             provider,
