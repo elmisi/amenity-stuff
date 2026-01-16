@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -103,26 +104,67 @@ def _extract_pdf_text_ocr(path: Path, *, max_chars: int) -> Optional[str]:
         return None
 
     ocr_parts: list[str] = []
-    max_pages = 3
+    max_pages = 4
+    tesseract_config = "--oem 1 --psm 6 -c preserve_interword_spaces=1"
+    alt_psm = ["3", "4", "6", "11"]
+
+    def score_text(text: str) -> float:
+        t = (text or "").strip()
+        if not t:
+            return 0.0
+        sample = t[:2000]
+        alnum = sum(ch.isalnum() for ch in sample)
+        letters = sum(ch.isalpha() for ch in sample)
+        spaces = sum(ch.isspace() for ch in sample)
+        weird = sum(ord(ch) < 9 or ord(ch) == 127 for ch in sample)
+        artifacts = len(re.findall(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])_(?=[A-Za-zÀ-ÖØ-öø-ÿ])", sample))
+        return (alnum + letters * 0.5 + spaces * 0.1) - (weird * 5.0 + artifacts * 3.0)
+
+    def clean_ocr_artifacts(text: str) -> str:
+        return re.sub(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])_(?=[A-Za-zÀ-ÖØ-öø-ÿ])", "", text or "")
+
     for page_index in range(min(len(doc), max_pages)):
         try:
             page = doc.load_page(page_index)
-            pix = page.get_pixmap(dpi=200)
+            pix = page.get_pixmap(dpi=300)
             mode = "RGB" if pix.alpha == 0 else "RGBA"
             img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
         except Exception:
             continue
 
-        text = ""
+        variants: list[Image.Image] = []
+        variants.append(img)
         try:
-            text = pytesseract.image_to_string(img, lang="eng+ita")
-        except Exception:
+            gray = img.convert("L")
+            variants.append(gray)
             try:
-                text = pytesseract.image_to_string(img, lang="eng")
+                from PIL import ImageOps
+
+                variants.append(ImageOps.autocontrast(gray))
+                variants.append(ImageOps.autocontrast(gray).point(lambda x: 255 if x > 180 else 0, mode="1"))
             except Exception:
-                text = ""
-        if text.strip():
-            ocr_parts.append(text.strip())
+                pass
+        except Exception:
+            pass
+
+        best_text = ""
+        best_score = 0.0
+        for v in variants:
+            for psm in alt_psm:
+                cfg = tesseract_config.replace("--psm 6", f"--psm {psm}")
+                for lang in ("ita+eng", "eng+ita", "eng"):
+                    try:
+                        text = pytesseract.image_to_string(v, lang=lang, config=cfg)
+                    except Exception:
+                        continue
+                    text = clean_ocr_artifacts(text)
+                    s = score_text(text)
+                    if s > best_score:
+                        best_score = s
+                        best_text = text
+
+        if best_text.strip():
+            ocr_parts.append(best_text.strip())
         if sum(len(p) for p in ocr_parts) >= max_chars:
             break
 
