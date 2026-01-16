@@ -113,6 +113,7 @@ class ArchiverApp(App):
             taxonomy_lines=self.settings.taxonomy_lines,
             text_model=self.settings.text_model,
             vision_model=self.settings.vision_model,
+            filename_separator=self.settings.filename_separator,
             skip_initial_setup=self.settings.skip_initial_setup,
         )
         self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
@@ -130,6 +131,7 @@ class ArchiverApp(App):
                 taxonomy_lines=self.settings.taxonomy_lines,
                 text_model=self.settings.text_model,
                 vision_model=self.settings.vision_model,
+                filename_separator=self.settings.filename_separator,
             )
         )
 
@@ -241,6 +243,7 @@ class ArchiverApp(App):
                 taxonomy_lines=self.settings.taxonomy_lines,
                 text_model=self.settings.text_model,
                 vision_model=self.settings.vision_model,
+                filename_separator=self.settings.filename_separator,
                 archive_root=self.settings.archive_root,
                 available_models=available_models,
             ),
@@ -256,6 +259,7 @@ class ArchiverApp(App):
             text_model=result.text_model,
             vision_model=result.vision_model,
             archive_root=result.archive_root,
+            filename_separator=result.filename_separator,
         )
         self.query_one("#lang", Static).update(f"Lang: {self.settings.output_language}")
         self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")

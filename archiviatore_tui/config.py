@@ -15,6 +15,7 @@ class AppConfig:
     taxonomy_lines: tuple[str, ...] = ()
     text_model: str = "auto"
     vision_model: str = "auto"
+    filename_separator: str = "space"  # space | underscore | dash
 
 
 def _config_path() -> Path:
@@ -37,6 +38,7 @@ def load_config() -> AppConfig:
     taxonomy_lines = data.get("taxonomy_lines")
     text_model = data.get("text_model")
     vision_model = data.get("vision_model")
+    filename_separator = data.get("filename_separator")
 
     kwargs: dict[str, object] = {}
     if isinstance(last_archive, str) and last_archive.strip():
@@ -57,6 +59,10 @@ def load_config() -> AppConfig:
         kwargs["text_model"] = text_model.strip()
     if isinstance(vision_model, str) and vision_model.strip():
         kwargs["vision_model"] = vision_model.strip()
+    if isinstance(filename_separator, str) and filename_separator.strip():
+        sep = filename_separator.strip().lower()
+        if sep in {"space", "underscore", "dash"}:
+            kwargs["filename_separator"] = sep
     return AppConfig(**kwargs)  # type: ignore[arg-type]
 
 

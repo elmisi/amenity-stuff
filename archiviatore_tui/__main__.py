@@ -57,6 +57,7 @@ def main() -> None:
         taxonomy_lines=taxonomy_lines,
         text_model=cfg.text_model,
         vision_model=cfg.vision_model,
+        filename_separator=cfg.filename_separator,
         skip_initial_setup=skip_setup,
     )
     # Disable mouse tracking so the terminal can do native text selection (copy with mouse).
