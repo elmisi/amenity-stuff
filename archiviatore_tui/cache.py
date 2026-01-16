@@ -29,6 +29,12 @@ class CacheEntry:
     llm_time_s: Optional[float] = None
     ocr_time_s: Optional[float] = None
     ocr_mode: Optional[str] = None
+    facts_time_s: Optional[float] = None
+    facts_llm_time_s: Optional[float] = None
+    facts_model_used: Optional[str] = None
+    classify_time_s: Optional[float] = None
+    classify_llm_time_s: Optional[float] = None
+    classify_model_used: Optional[str] = None
 
 
 class CacheStore:
@@ -71,6 +77,12 @@ class CacheStore:
                     llm_time_s=entry.get("llm_time_s"),
                     ocr_time_s=entry.get("ocr_time_s"),
                     ocr_mode=entry.get("ocr_mode"),
+                    facts_time_s=entry.get("facts_time_s"),
+                    facts_llm_time_s=entry.get("facts_llm_time_s"),
+                    facts_model_used=entry.get("facts_model_used"),
+                    classify_time_s=entry.get("classify_time_s"),
+                    classify_llm_time_s=entry.get("classify_llm_time_s"),
+                    classify_model_used=entry.get("classify_model_used"),
                 )
             except Exception:
                 continue
@@ -118,6 +130,12 @@ class CacheStore:
             llm_time_s=item.llm_time_s,
             ocr_time_s=item.ocr_time_s,
             ocr_mode=item.ocr_mode,
+            facts_time_s=item.facts_time_s,
+            facts_llm_time_s=item.facts_llm_time_s,
+            facts_model_used=item.facts_model_used,
+            classify_time_s=item.classify_time_s,
+            classify_llm_time_s=item.classify_llm_time_s,
+            classify_model_used=item.classify_model_used,
         )
 
     def invalidate(self, item: ScanItem) -> None:

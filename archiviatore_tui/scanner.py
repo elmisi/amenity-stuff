@@ -20,8 +20,8 @@ class ScanItem:
     proposed_name: Optional[str] = None
     summary: Optional[str] = None
     confidence: Optional[float] = None
-    analysis_time_s: Optional[float] = None
-    model_used: Optional[str] = None
+    analysis_time_s: Optional[float] = None  # last operation elapsed (best-effort)
+    model_used: Optional[str] = None  # last model used (best-effort)
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
     extract_method: Optional[str] = None
@@ -29,6 +29,12 @@ class ScanItem:
     llm_time_s: Optional[float] = None
     ocr_time_s: Optional[float] = None
     ocr_mode: Optional[str] = None
+    facts_time_s: Optional[float] = None
+    facts_llm_time_s: Optional[float] = None
+    facts_model_used: Optional[str] = None
+    classify_time_s: Optional[float] = None
+    classify_llm_time_s: Optional[float] = None
+    classify_model_used: Optional[str] = None
 
 
 def _infer_kind(path: Path) -> Optional[str]:
