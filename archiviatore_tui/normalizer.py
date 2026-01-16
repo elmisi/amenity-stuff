@@ -265,9 +265,12 @@ def _propose_name_from_summary_and_facts(
         return None
     facts = _parse_facts_json(facts_json)
     doc_type = facts.get("doc_type") if isinstance(facts.get("doc_type"), str) else ""
+    purpose = facts.get("purpose") if isinstance(facts.get("purpose"), str) else ""
     tags = facts.get("tags") if isinstance(facts.get("tags"), list) else []
     kind = (doc_type or (str(tags[0]) if tags else "")).strip()
     kind = re.sub(r"\b(document|documento|file|testo|immagine|image|text)\b", "", kind, flags=re.IGNORECASE).strip()
+    if not kind and purpose:
+        kind = purpose.strip()
 
     orgs = facts.get("organizations") if isinstance(facts.get("organizations"), list) else []
     people = facts.get("people") if isinstance(facts.get("people"), list) else []
@@ -278,6 +281,9 @@ def _propose_name_from_summary_and_facts(
 
     pieces: list[str] = []
     pieces.extend(_split_tokens(kind)[:4])
+    if purpose and purpose != kind:
+        # Allow purpose to contribute a little extra signal (kept short to avoid overly long names).
+        pieces.extend(_split_tokens(purpose)[:3])
     pieces.extend(_split_tokens(entity)[:3])
     if isinstance(date_tok, str) and date_tok.strip():
         # Keep date as a single token so we don't de-duplicate month/day (e.g. 04 04).
@@ -367,6 +373,7 @@ Constraints:
 - category MUST be one of: {list(allowed)}
 - proposed_name MUST be descriptive, 6-14 words when possible.
 - Include key entities (organization/person) and a date/period if available in the facts or summary.
+- Use the document "purpose" (facts.purpose) as a generic, cross-domain hint: what the document is for / why it exists.
 - Copy proper names as-is; do NOT guess spellings. If uncertain, omit the entity.
 - Use {sep_desc} between words (no mixed separators). Do NOT put separators inside a word.
 - Do NOT include generic words like "document", "file", "text", "image".
