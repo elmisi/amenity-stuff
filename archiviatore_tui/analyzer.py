@@ -280,6 +280,61 @@ def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
     return (t[:head].rstrip() + "\n\n…\n\n" + t[-tail:].lstrip()).strip()
 
 
+_EVIDENCE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # IT/EN generic fields
+    re.compile(r"\b(oggetto|subject|scopo|finalit[aà]|purpose)\b\s*[:\-]", re.IGNORECASE),
+    re.compile(r"\b(data|date|emissione|issue)\b\s*[:\-]", re.IGNORECASE),
+    re.compile(r"\b(importo|totale|total|amount|eur|€)\b", re.IGNORECASE),
+    re.compile(r"\b(codice|id|identificativo|protocollo|pratica|invoice)\b", re.IGNORECASE),
+    re.compile(r"\b(ente|creditore|cliente|debitor[e]?|payer|payee)\b", re.IGNORECASE),
+)
+
+
+def _build_evidence_pack(text: str, *, max_chars: int = 3500, max_snippets: int = 6) -> tuple[str, list[dict]]:
+    """Build a token-efficient evidence pack + audit snippets.
+
+    The pack is a curated excerpt: head + tail + key lines around known patterns.
+    """
+    t = (text or "").strip()
+    if not t:
+        return "", []
+    lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
+
+    # Collect candidate line indices that match patterns.
+    idxs: list[int] = []
+    for i, ln in enumerate(lines):
+        if any(p.search(ln) for p in _EVIDENCE_PATTERNS):
+            idxs.append(i)
+
+    # Expand around hits (small context).
+    picked: list[str] = []
+    for i in idxs:
+        for j in range(max(0, i - 1), min(len(lines), i + 2)):
+            picked.append(lines[j])
+
+    # De-duplicate preserving order and keep short.
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for ln in picked:
+        key = ln.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(ln)
+        if len(uniq) >= max_snippets:
+            break
+
+    evidence = [{"snippet": ln[:200]} for ln in uniq]
+
+    # Build the evidence pack.
+    head = t[: min(len(t), int(max_chars * 0.45))].strip()
+    tail = t[-min(len(t), int(max_chars * 0.25)) :].strip()
+    mid = "\n".join(uniq).strip()
+    pack = "\n\n".join([p for p in [head, mid, tail] if p]).strip()
+    pack = _content_excerpt_for_llm(pack, max_chars=max_chars)
+    return pack, evidence
+
+
 def _ensure_extension(proposed_name: str, original_filename: str) -> str:
     original_ext = Path(original_filename).suffix
     if not original_ext:
@@ -846,6 +901,7 @@ Output JSON schema:
   "amounts": [{{"value": number, "currency": string, "raw": string}}],
   "identifiers": [{{"type": string, "value": string}}],
   "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
+  "evidence": [{{"source": "text"|"pdftotext"|"ocr"|"image", "snippet": string}}],  // max 6 items, max 200 chars each
   "summary_long": string,   // 6-12 sentences, include the most important extracted values (who/what/when/how much/ids)
   "confidence": number,
   "skip_reason": string|null
@@ -886,6 +942,7 @@ Output JSON schema:
         "amounts": data.get("amounts") if isinstance(data.get("amounts"), list) else [],
         "identifiers": data.get("identifiers") if isinstance(data.get("identifiers"), list) else [],
         "date_candidates": _coerce_date_candidates(data.get("date_candidates")),
+        "evidence": data.get("evidence") if isinstance(data.get("evidence"), list) else [],
         "year_hint_filename": year_hint_filename,
         "year_hint_text": year_hint_text,
     }
@@ -924,7 +981,8 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 )
             return res
         year_hint_text = _extract_year_hint_from_text(text)
-        excerpt = _content_excerpt_for_llm(text, max_chars=14000)
+        evidence_pack, evidence = _build_evidence_pack(text, max_chars=3500)
+        excerpt = evidence_pack or _content_excerpt_for_llm(text, max_chars=14000)
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
         t0 = time.perf_counter()
         res = _extract_facts_from_text(
@@ -946,6 +1004,15 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 ocr_time_s=meta.ocr_time_s,
                 ocr_mode=meta.ocr_mode,
             )
+        if res.facts_json and evidence:
+            try:
+                obj = json.loads(res.facts_json)
+                if isinstance(obj, dict):
+                    obj["evidence"] = evidence
+                    obj["evidence_source"] = meta.method if meta else "text"
+                    res = replace(res, facts_json=json.dumps(obj, ensure_ascii=False, sort_keys=True))
+            except Exception:
+                pass
         return replace(res, llm_time_s=llm_elapsed)
 
     if item.kind == "image":

@@ -99,16 +99,22 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
         width = 120
 
     purpose = ""
+    evidence_count: int = 0
     try:
         if isinstance(item.facts_json, str) and item.facts_json.strip():
             facts = json.loads(item.facts_json)
             if isinstance(facts, dict) and isinstance(facts.get("purpose"), str):
                 purpose = facts.get("purpose", "").strip()
+            if isinstance(facts, dict) and isinstance(facts.get("evidence"), list):
+                evidence_count = len([e for e in facts.get("evidence", []) if isinstance(e, dict)])
     except Exception:
         purpose = ""
+        evidence_count = 0
 
     if purpose:
         lines.extend(_wrap_field(label="Purpose", value=purpose, width=width))
+    if evidence_count:
+        lines.append(f"Evidence: {evidence_count} snippet(s)")
 
     # Display only the richer summary in the details panel (the short summary is kept in data/caches).
     lines.extend(_wrap_field(label="Summary", value=(item.summary_long or ""), width=width))
