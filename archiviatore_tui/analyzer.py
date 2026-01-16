@@ -838,6 +838,7 @@ Output JSON schema:
 {{
   "language": "it"|"en"|"unknown",
   "doc_type": string|null,
+  "purpose": string,        // one sentence: why this document exists / what it is for
   "tags": string[],
   "people": string[],
   "organizations": string[],
@@ -877,6 +878,7 @@ Output JSON schema:
     facts = {
         "language": data.get("language") if isinstance(data.get("language"), str) else None,
         "doc_type": data.get("doc_type") if isinstance(data.get("doc_type"), str) else None,
+        "purpose": data.get("purpose") if isinstance(data.get("purpose"), str) else None,
         "tags": _coerce_list(data.get("tags")),
         "people": _coerce_list(data.get("people")),
         "organizations": _coerce_list(data.get("organizations")),

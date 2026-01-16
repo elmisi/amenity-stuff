@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -96,6 +97,18 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
 
     if width < 20:
         width = 120
+
+    purpose = ""
+    try:
+        if isinstance(item.facts_json, str) and item.facts_json.strip():
+            facts = json.loads(item.facts_json)
+            if isinstance(facts, dict) and isinstance(facts.get("purpose"), str):
+                purpose = facts.get("purpose", "").strip()
+    except Exception:
+        purpose = ""
+
+    if purpose:
+        lines.extend(_wrap_field(label="Purpose", value=purpose, width=width))
 
     # Display only the richer summary in the details panel (the short summary is kept in data/caches).
     lines.extend(_wrap_field(label="Summary", value=(item.summary_long or ""), width=width))
