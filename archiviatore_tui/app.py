@@ -37,9 +37,9 @@ from .help_screen import HelpScreen
 class ArchiverApp(App):
     CSS = """
     Screen { layout: vertical; }
-    #top { height: 3; }
+    #top { height: 4; }
     #banner { height: 1; padding: 0 1; }
-    #notes { height: 1; color: $text-muted; }
+    #notes { height: 1; color: $text-muted; padding: 0 1; }
     #files { height: 1fr; }
     #details_box { height: 9; border: round $accent; background: $panel; }
     #details_text { padding: 0 2; }
@@ -81,11 +81,10 @@ class ArchiverApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Container(id="top"):
-            with Horizontal(id="meta"):
-                yield Static(f"Source: {self.settings.source_root}", id="src")
-                yield Static(f"Archive: {self.settings.archive_root}", id="arc")
-            yield Static("", id="banner")
+            yield Static(f"Source: {self.settings.source_root}", id="src")
+            yield Static(f"Archive: {self.settings.archive_root}", id="arc")
             yield Static("Ready.", id="notes")
+            yield Static("", id="banner")
 
         files = DataTable(id="files")
         files.add_column(" ", key="status", width=2)
@@ -763,12 +762,17 @@ class ArchiverApp(App):
         self._scan_items[row_index] = mark_item
         files.update_cell(path_str, "status", status_cell("scanning"))
         self._update_details(row_index)
+        self._analysis_task.cancel_requested = False
+        self._analysis_task.running = True
         self._render_notes()
 
         def do_one() -> None:
+            worker = get_current_worker()
             taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             t0 = time.perf_counter()
+            if worker.is_cancelled:
+                return
             res = extract_facts_item(reset, config=cfg)
             elapsed = time.perf_counter() - t0
             updated = replace(
@@ -807,11 +811,13 @@ class ArchiverApp(App):
                 if self._cache:
                     self._cache.upsert(updated)
                     self._cache.save()
+                self._analysis_task.running = False
                 self._render_notes()
 
             self.call_from_thread(apply)
 
-        self.run_worker(do_one, thread=True, exclusive=True)
+        worker = self.run_worker(do_one, thread=True, exclusive=True)
+        self._analysis_task.worker = worker
 
     async def _run_classify_row(self, *, force: bool) -> None:
         if self._analysis_task.running or self._scan_task.running:
@@ -837,10 +843,15 @@ class ArchiverApp(App):
         self._scan_items[row_index] = replace(it, status="classifying", reason=None)
         files.update_cell(key, "status", status_cell("classifying"))
         self._update_details(row_index)
+        self._analysis_task.cancel_requested = False
+        self._analysis_task.running = True
         self._render_notes()
 
         def do_one() -> None:
+            worker = get_current_worker()
             t0 = time.perf_counter()
+            if worker.is_cancelled:
+                return
             res = normalize_items(
                 items=[it],
                 model=model,
@@ -882,11 +893,13 @@ class ArchiverApp(App):
                 if self._cache:
                     self._cache.upsert(updated)
                     self._cache.save()
+                self._analysis_task.running = False
                 self._render_notes()
 
             self.call_from_thread(apply)
 
-        self.run_worker(do_one, thread=True, exclusive=True)
+        worker = self.run_worker(do_one, thread=True, exclusive=True)
+        self._analysis_task.worker = worker
 
     def _render_files(self) -> None:
         files = self.query_one("#files", DataTable)
@@ -961,7 +974,6 @@ class ArchiverApp(App):
             problem=problem,
             severity=severity,
         )
-        self.query_one("#banner", Static).update(Text(banner_text, style=banner_style))
         self.query_one("#notes", Static).update(
             notes_line(
                 scan_items_total=total,
@@ -974,6 +986,7 @@ class ArchiverApp(App):
                 error=err,
             )
         )
+        self.query_one("#banner", Static).update(Text(banner_text, style=banner_style))
 
     def _provider_problem(self) -> tuple[str | None, str]:
         """Return (problem, severity) for the active local setup."""
@@ -1002,7 +1015,7 @@ class ArchiverApp(App):
             base = problem or "Error"
             return (f"ERROR: {base}", "bold white on red")
         if severity == "info" and state == "idle":
-            return ("Status: idle • Detecting providers…", "bold black on grey70")
+            return ("Status: idle (detecting providers…)", "bold black on grey70")
         if state == "idle":
             return ("Status: idle (no running task)", "bold black on grey70")
         if state.startswith("stopping"):
