@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from .app import ArchiverApp
@@ -55,7 +56,12 @@ def main() -> None:
         skip_initial_setup=skip_setup,
     )
     # Disable mouse tracking so the terminal can do native text selection (copy with mouse).
-    ArchiverApp(settings).run(mouse=False)
+    try:
+        ArchiverApp(settings).run(mouse=False)
+    except KeyboardInterrupt:
+        # Textual runs worker threads for long-running tasks (OCR/LLM). A SIGINT while a worker is
+        # running may block on thread shutdown. Exit immediately to avoid a noisy traceback.
+        os._exit(130)
 
 
 if __name__ == "__main__":
