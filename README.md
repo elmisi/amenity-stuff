@@ -14,6 +14,12 @@ python3 -m venv .venv
 amenity-stuff
 ```
 
+System-wide (recommended):
+```bash
+pipx install git+https://github.com/elmisi/amenity-stuff.git
+amenity-stuff
+```
+
 ## Settings
 
 You can change:
@@ -76,9 +82,10 @@ The table lists (up to `--max-files`) `pdf` and common image formats (`jpg/jpeg/
 - `s` scan row (facts extraction, force)
 - `S` scan pending (facts extraction)
 - `c` classify row (requires `scanned`)
-- `C` classify scanned (`scanned` + `classified`, for coherence)
-- `x` stop current task
+- `C` classify scanned (`scanned` only)
+- `x` stop current task (scan or classify)
 - `enter` open selected file (default app)
+- `u` unclassify selected row (keep scan results)
 - `r` reset selected row (back to `pending`, invalidate cache)
 - `R` reset all + clear cache (confirmation)
 - `F2` settings
@@ -89,17 +96,16 @@ During extraction/classification, status transitions and the UI remains interact
 Mouse text selection is supported (so you can select/copy fields like absolute paths).
 
 ### Status
-The `Status` column includes a marker:
-- `· pending` discovered, waiting
-- `… scan` scanning (phase 1)
-- `✓ scan` scanned (facts collected)
-- `≈ cls` classifying (phase 2)
-- `★ done` classification proposal available
-- `↷ skipped` not classifiable / low confidence
-- `× error` I/O or Ollama error
+The `Status` column is icon-only (with color):
+- `·` pending
+- `✓` scanning / classifying (running)
+- `✓` scanned (facts available, not yet classified)
+- `✓` classified (category/year/name proposed)
+- `✗` skipped / error
 
 ### Cache (MVP)
 
 Results are cached in `<source>/.amenity-stuff/cache.json` and reused on re-scan.
 - `r` invalidates cache for the selected file
 - `R` clears the cache for the whole batch
+- `u` keeps scan results but clears classification fields
