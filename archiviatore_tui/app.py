@@ -211,10 +211,15 @@ class ArchiverApp(App):
         await self.action_classify_batch()
 
     async def action_stop_analysis(self) -> None:
-        if not self._analysis_task.running or self._analysis_task.worker is None:
-            return
-        self._analysis_task.request_cancel()
-        self._render_notes()
+        stopped_any = False
+        if self._analysis_task.running:
+            self._analysis_task.request_cancel()
+            stopped_any = True
+        if self._scan_task.running:
+            self._scan_task.request_cancel()
+            stopped_any = True
+        if stopped_any:
+            self._render_notes()
 
     async def action_reset_row(self) -> None:
         if self._analysis_task.running or self._scan_task.running:
@@ -412,12 +417,14 @@ class ArchiverApp(App):
         files.clear()
 
         def do_scan() -> list[ScanItem]:
+            worker = get_current_worker()
             return scan_files(
                 self.settings.source_root,
                 recursive=self.settings.recursive,
                 max_files=self.settings.max_files,
                 include_extensions=self.settings.include_extensions,
                 exclude_dirnames=self.settings.exclude_dirnames,
+                should_cancel=lambda: worker.is_cancelled,
             )
 
         worker = self.run_worker(do_scan, thread=True, exclusive=True)
@@ -662,23 +669,40 @@ class ArchiverApp(App):
                     taxonomy=taxonomy,
                     output_language=self.settings.output_language,
                     filename_separator=self.settings.filename_separator,
+                    should_cancel=lambda: worker.is_cancelled,
                 )
                 llm_elapsed = time.perf_counter() - t0
                 if res.error:
                     for it in targets:
-                        if worker.is_cancelled:
-                            break
                         key = str(it.path)
+                        upd = res.by_path.get(key) if res.by_path else None
+                        if upd:
+                            idx = self._scan_index_by_path.get(key)
+                            if idx is None:
+                                continue
+                            cur = self._scan_items[idx]
+                            updated = replace(
+                                cur,
+                                status="classified",
+                                category=upd.get("category") or cur.category,
+                                reference_year=upd.get("reference_year") or cur.reference_year,
+                                proposed_name=upd.get("proposed_name") or cur.proposed_name,
+                                summary=upd.get("summary") or cur.summary,
+                                model_used=str(upd.get("model_used") or cur.model_used or ""),
+                                reason=None,
+                                classify_time_s=llm_elapsed,
+                                classify_llm_time_s=llm_elapsed,
+                                classify_model_used=str(upd.get("model_used") or cur.model_used or ""),
+                            )
+                            self.call_from_thread(apply_norm, key, updated)
+                            continue
                         idx = self._scan_index_by_path.get(key)
                         if idx is None:
                             continue
                         cur = self._scan_items[idx]
                         if cur.status == "classifying":
-                            self.call_from_thread(
-                                apply_norm,
-                                key,
-                                replace(cur, status="scanned", reason=f"Classification error: {res.error}"),
-                            )
+                            reason = "Classification stopped" if worker.is_cancelled else f"Classification error: {res.error}"
+                            self.call_from_thread(apply_norm, key, replace(cur, status="scanned", reason=reason))
                     self.call_from_thread(finish, cancelled=worker.is_cancelled)
                     return
 
@@ -775,6 +799,10 @@ class ArchiverApp(App):
                 return
             res = extract_facts_item(reset, config=cfg)
             elapsed = time.perf_counter() - t0
+            if worker.is_cancelled:
+                stopped = replace(reset, status="pending", reason="Scan stopped")
+                self.call_from_thread(apply_result, path_str, stopped)
+                return
             updated = replace(
                 reset,
                 status=res.status,
@@ -860,8 +888,13 @@ class ArchiverApp(App):
                 output_language=self.settings.output_language,
                 filename_separator=self.settings.filename_separator,
                 chunk_size=1,
+                should_cancel=lambda: worker.is_cancelled,
             )
             llm_elapsed = time.perf_counter() - t0
+            if worker.is_cancelled:
+                updated = replace(it, status="scanned", reason="Classification stopped")
+                self.call_from_thread(apply_norm, key, updated)
+                return
             upd = res.by_path.get(key) if res.by_path else None
             if res.error or not upd:
                 updated = replace(it, status="scanned", reason=f"Classification error: {res.error or 'no output'}")

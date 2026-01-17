@@ -5,7 +5,7 @@ import re
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .ollama_client import generate
 from .scanner import ScanItem
@@ -411,6 +411,7 @@ def normalize_items(
     output_language: str,
     filename_separator: str,
     chunk_size: int = 25,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> NormalizationResult:
     allowed = taxonomy.allowed_names
     taxonomy_block = taxonomy_to_prompt_block(taxonomy)
@@ -431,6 +432,8 @@ def normalize_items(
 
     by_path: dict[str, dict] = {}
     for batch in _chunk(items, chunk_size):
+        if should_cancel and should_cancel():
+            return NormalizationResult(by_path=by_path, model_used=model, error="Cancelled")
         payload = []
         by_input_path = {str(it.path): it for it in batch}
         for it in batch:
@@ -489,6 +492,8 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
 ]
 """
 
+        if should_cancel and should_cancel():
+            return NormalizationResult(by_path=by_path, model_used=model, error="Cancelled")
         gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
         if gen.error:
             return NormalizationResult(by_path=by_path, model_used=model, error=gen.error)
