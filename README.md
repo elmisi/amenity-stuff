@@ -15,13 +15,21 @@ See `PROJECT_SPEC.md` for a more detailed (and up-to-date) project specification
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install .
-amenity-stuff
+amenity-stuff run
 ```
 
 System-wide (recommended):
 ```bash
 pipx install git+https://github.com/elmisi/amenity-stuff.git
-amenity-stuff
+amenity-stuff run
+```
+
+## Performance report
+
+After running Scan/Classify on a folder, you can print a short timing summary from the cache:
+
+```bash
+amenity-stuff report --source /path/to/folder
 ```
 
 ## Settings
