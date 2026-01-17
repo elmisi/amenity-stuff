@@ -26,6 +26,23 @@ Press `F2` in the TUI to open Settings. Configuration is stored in `~/.config/am
 Taxonomy format (one per line):
 `name | description | examples` (examples are optional, separated by `;`).
 
+Example taxonomy (Italian slugs):
+```
+casa | Abitazione e immobili: affitto, condominio, utenze, manutenzione, tasse/assicurazione casa | affitto; contratto locazione; condominio; amministratore; manutenzione; assicurazione casa; IMU; TARI; bolletta; luce; gas; acqua; internet; energia
+acquisti | Acquisti e abbonamenti: ordini, ricevute, garanzie, servizi | ricevuta; scontrino; ordine; conferma ordine; abbonamento; rinnovo; garanzia; fattura acquisto; e-commerce; marketplace
+viaggi | Viaggi e trasporti: prenotazioni, biglietti, itinerari | volo; biglietto; hotel; prenotazione; itinerario; noleggio auto; assicurazione viaggio; treno; trasporto
+tasse | Tasse e pubblica amministrazione: pagamenti e comunicazioni ufficiali | F24; dichiarazione redditi; Agenzia Entrate; tributo; avviso pagamento; PagoPA; Comune; protocollo; cartella; imposta
+banca | Banca e pagamenti “generici”: estratti conto e movimenti non riconducibili ad altro | estratto conto; bonifico; carta; transazione; addebito; accredito; ricevuta pagamento; conto corrente
+legale | Documenti legali e compliance | contratto; termini; privacy; diffida; procura; atto; denuncia; ricorso; NDA; lettera legale
+lavoro | Documenti di lavoro e professionali | busta paga; cedolino; payroll; timesheet; contratto lavoro; offerta; HR; CU/CUD; lettera assunzione; dimissioni
+personale | Documenti personali, identità, lettere, appunti scritti a mano | carta d'identità; passaporto; patente; certificato; lettera personale; appunti; nota; testo canzone; poesia; scritto a mano
+salute | Documenti sanitari e medici | referto; ricetta; analisi; visita; certificato medico; vaccino; fattura medica; terapia
+studio | Scuola, università e formazione | attestato; certificato; diploma; transcript; materiale corso; iscrizione; esame; tesi
+media | Contenuti e media: libri, foto, screenshot, audio/video | ebook; libro; articolo; foto; screenshot; scansione foto; audio; video
+tecnica | Documenti tecnici: manuali, specifiche, documentazione | manuale; specifica; datasheet; documentazione API; architettura; configurazione; log; guida
+sconosciuto | Non classificato / saltato |
+```
+
 ## Security & Privacy
 - Local-first: the goal is to avoid sending content to external services.
 - Files are read and analyzed locally; when OCR is enabled, text is extracted from scans/images too.
