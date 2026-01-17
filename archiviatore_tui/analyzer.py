@@ -413,10 +413,17 @@ def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
     Strategy: if too long, keep head + tail (documents often contain totals/ids on the last part).
     """
     t = (text or "").strip()
-    if len(t) <= max_chars:
+    budget = max_chars
+    # Very large documents can explode LLM latency; cap harder.
+    if len(t) > max_chars * 8:
+        budget = min(budget, 6000)
+    elif len(t) > max_chars * 4:
+        budget = min(budget, 9000)
+
+    if len(t) <= budget:
         return t
-    head = int(max_chars * 0.7)
-    tail = max_chars - head
+    head = int(budget * 0.7)
+    tail = budget - head
     return (t[:head].rstrip() + "\n\n…\n\n" + t[-tail:].lstrip()).strip()
 
 
