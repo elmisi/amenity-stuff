@@ -11,7 +11,6 @@ from .taxonomy import DEFAULT_TAXONOMY_LINES
 class Settings:
     source_root: Path
     archive_root: Path
-    max_files: int = 100
     recursive: bool = True
     include_extensions: tuple[str, ...] = ("pdf", "jpg", "jpeg", "png")
     exclude_dirnames: tuple[str, ...] = (".git", ".venv", "ARCHIVE")

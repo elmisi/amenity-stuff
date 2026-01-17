@@ -24,12 +24,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Path("./ARCHIVE"),
         help="Archive root destination (default: ./ARCHIVE)",
     )
-    parser.add_argument(
-        "--max-files",
-        type=int,
-        default=100,
-        help="Max files per batch (default: 100)",
-    )
     return parser
 
 
@@ -46,7 +40,6 @@ def main() -> None:
     settings = Settings(
         source_root=default_source,
         archive_root=default_archive,
-        max_files=args.max_files,
         output_language=cfg.output_language,
         taxonomy_lines=taxonomy_lines,
         text_model=cfg.text_model,

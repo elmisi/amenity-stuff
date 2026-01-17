@@ -51,7 +51,6 @@ def scan_files(
     source_root: Path,
     *,
     recursive: bool,
-    max_files: int,
     include_extensions: Iterable[str],
     exclude_dirnames: Iterable[str],
     should_cancel: Optional[Callable[[], bool]] = None,
@@ -87,8 +86,6 @@ def scan_files(
     def consider_file(path: Path) -> None:
         if should_cancel and should_cancel():
             return
-        if len(items) >= max_files:
-            return
         ext = path.suffix.lower().lstrip(".")
         if ext not in include:
             return
@@ -123,8 +120,6 @@ def scan_files(
                 break
             if child.is_file():
                 consider_file(child)
-            if len(items) >= max_files:
-                break
         return items
 
     for dirpath, dirnames, filenames in os.walk(source_root):
@@ -134,11 +129,7 @@ def scan_files(
         for filename in filenames:
             if should_cancel and should_cancel():
                 break
-            if len(items) >= max_files:
-                break
             consider_file(Path(dirpath) / filename)
-        if len(items) >= max_files:
-            break
 
     return items
 

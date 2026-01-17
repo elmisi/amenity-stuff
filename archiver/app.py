@@ -123,7 +123,6 @@ class ArchiverApp(App):
         self.settings = Settings(
             source_root=setup.source_root,
             archive_root=setup.archive_root,
-            max_files=self.settings.max_files,
             recursive=self.settings.recursive,
             include_extensions=self.settings.include_extensions,
             exclude_dirnames=self.settings.exclude_dirnames,
@@ -504,7 +503,6 @@ class ArchiverApp(App):
             return scan_files(
                 self.settings.source_root,
                 recursive=self.settings.recursive,
-                max_files=self.settings.max_files,
                 include_extensions=self.settings.include_extensions,
                 exclude_dirnames=self.settings.exclude_dirnames,
                 should_cancel=lambda: worker.is_cancelled,

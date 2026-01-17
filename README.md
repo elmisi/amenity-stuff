@@ -79,7 +79,7 @@ Models: the app uses a text model and (for images) a vision model; exact model n
 
 ## Scan (MVP)
 
-The table lists (up to `--max-files`) `pdf` and common image formats (`jpg/jpeg/png`) found in the selected source folder.
+The table lists `pdf` and common image formats (`jpg/jpeg/png`) found in the selected source folder.
 
 ### Keys
 - `ctrl+r` reload dir
