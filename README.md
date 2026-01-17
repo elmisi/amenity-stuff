@@ -78,6 +78,14 @@ If a PDF has no extractable text (i.e. it's effectively an image), or if you sca
 - Ubuntu / Linux Mint:
   - `sudo apt-get install tesseract-ocr tesseract-ocr-ita`
 
+### `.doc` / `.xls` extraction (optional)
+`amenity-stuff` can extract text from:
+- `.docx` and `.xlsx` without extra dependencies (best-effort)
+- `.doc` and `.xls` via LibreOffice (best-effort)
+
+- Ubuntu / Linux Mint:
+  - `sudo apt-get install libreoffice`
+
 ## LLM Provider
 
 On startup the app tries to detect:
@@ -87,7 +95,10 @@ Models: the app uses a text model and (for images) a vision model; exact model n
 
 ## Scan (MVP)
 
-The table lists `pdf` and common image formats (`jpg/jpeg/png`) found in the selected source folder.
+The table lists common formats found in the selected source folder:
+- `pdf`
+- images: `jpg/jpeg/png`
+- office: `doc/docx/xls/xlsx` (see optional dependencies above)
 
 ### Keys
 - `ctrl+r` reload dir
