@@ -38,10 +38,9 @@ class HelpScreen(ModalScreen[None]):
                         "Settings: F2 • Quit: q",
                     ]
                 )
-            )
+            , markup=False)
             yield Static("Enter / Esc / q to close", id="hint")
         yield Footer()
 
     def action_close(self) -> None:
         self.dismiss(None)
-

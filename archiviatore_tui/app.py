@@ -85,7 +85,7 @@ class ArchiverApp(App):
                 yield Static(f"Lang: {self.settings.output_language}", id="lang")
             yield Static("", id="banner")
             yield Static("Ready.", id="notes")
-            yield Static("", id="shortcuts")
+            yield Static("", id="shortcuts", markup=False)
 
         files = DataTable(id="files")
         files.add_column(" ", key="status", width=2)
@@ -965,11 +965,11 @@ class ArchiverApp(App):
     @staticmethod
     def _shortcuts_line() -> str:
         return (
-            "Scan: [s] file [S] pending [x] stop • "
-            "Classify: [c] file [C] scanned • "
-            "Reset: [r] row [R] all • "
-            "Reload: [Ctrl+R] • "
-            "Settings: [F2] • Help: [F1] • Quit: [q]"
+            "Scan: s=file S=pending x=stop • "
+            "Classify: c=file C=scanned • "
+            "Reset: r=row R=all • "
+            "Reload: Ctrl+R • "
+            "Settings: F2 • Help: F1 • Quit: q"
         )
 
     @staticmethod
