@@ -80,7 +80,7 @@ class ArchiverApp(App):
             yield Static("Ready.", id="notes")
 
         files = DataTable(id="files")
-        files.add_column("St", key="status", width=6)
+        files.add_column(" ", key="status", width=2)
         files.add_column("Type", key="kind")
         files.add_column("File", key="file")
         files.add_column("Category", key="category")
@@ -217,6 +217,7 @@ class ArchiverApp(App):
         if row_index < 0 or row_index >= len(self._scan_items):
             return
         item = self._scan_items[row_index]
+        key = str(item.path)
         reset = replace(
             item,
             status="pending",
@@ -247,9 +248,10 @@ class ArchiverApp(App):
         if self._cache:
             self._cache.invalidate(item)
             self._cache.save()
-        self._render_files()
-        self.query_one("#files", DataTable).move_cursor(row=row_index, column=0, scroll=True)
-        self._update_details_from_cursor()
+        files.update_cell(key, "status", status_cell("pending"))
+        files.update_cell(key, "category", "")
+        files.update_cell(key, "year", "")
+        self._update_details(row_index)
         self._render_notes()
 
     async def action_reset_all(self) -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from importlib import metadata
 from typing import TYPE_CHECKING
 
+from rich.text import Text
+
 if TYPE_CHECKING:  # pragma: no cover
     from .discovery import DiscoveryResult
     from .settings import Settings
@@ -19,7 +21,7 @@ def app_title(*, provider_line: str = "") -> str:
     return base
 
 
-def status_cell(status: str) -> str:
+def status_cell(status: str) -> Text:
     # Backward-compatible mapping for older cache entries / statuses.
     status = {
         "analysis": "scanning",
@@ -29,25 +31,16 @@ def status_cell(status: str) -> str:
         "normalizing": "classifying",
         "normalized": "classified",
     }.get(status, status)
-    marker = {
-        "pending": "·",
-        "scanning": "…",
-        "scanned": "✓",
-        "classifying": "≈",
-        "classified": "★",
-        "skipped": "↷",
-        "error": "×",
-    }.get(status, "?")
-    short = {
-        "pending": "pend",
-        "scanning": "scan",
-        "scanned": "scan",
-        "classifying": "cls",
-        "classified": "done",
-        "skipped": "skip",
-        "error": "err",
-    }.get(status, status[:4])
-    return f"{marker} {short}"
+    icon, style = {
+        "pending": ("·", "bright_black"),
+        "scanning": ("✓", "bright_blue"),
+        "classifying": ("✓", "bright_blue"),
+        "scanned": ("✓", "yellow"),
+        "classified": ("✓", "green"),
+        "skipped": ("✗", "red"),
+        "error": ("✗", "red"),
+    }.get(status, ("?", "bright_black"))
+    return Text(icon, style=style)
 
 
 def provider_summary(discovery: "DiscoveryResult | None", settings: "Settings", *, model_picker) -> str:
