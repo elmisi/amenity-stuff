@@ -84,7 +84,7 @@ The table lists (up to `--max-files`) `pdf` and common image formats (`jpg/jpeg/
 - `s` scan row (facts extraction, force)
 - `S` scan pending (facts extraction)
 - `c` classify row (requires `scanned`)
-- `C` classify scanned (`scanned` only)
+- `C` classify scanned (`scanned` only, per-file)
 - `x` stop current task (scan or classify)
 - `enter` open selected file (default app)
 - `u` unclassify selected row (keep scan results)

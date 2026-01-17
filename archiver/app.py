@@ -687,8 +687,6 @@ class ArchiverApp(App):
         if not targets:
             return
 
-        batch_size = 25
-
         self._analysis_task.cancel_requested = False
         self._analysis_task.running = True
         self._render_notes()
@@ -739,93 +737,65 @@ class ArchiverApp(App):
         def do_classify_background() -> None:
             worker = get_current_worker()
             try:
-                for start in range(0, len(targets), batch_size):
+                for it in targets:
                     if worker.is_cancelled:
                         break
-                    batch = targets[start : start + batch_size]
-                    for it in batch:
-                        if worker.is_cancelled:
-                            break
-                        self.call_from_thread(mark_classifying, str(it.path))
-                    if worker.is_cancelled:
-                        break
+                    path_str = str(it.path)
+                    self.call_from_thread(mark_classifying, path_str)
 
                     t0 = time.perf_counter()
                     res = normalize_items(
-                        items=batch,
+                        items=[it],
                         model=model,
                         base_url="http://localhost:11434",
                         taxonomy=taxonomy,
                         output_language=self.settings.output_language,
                         filename_separator=self.settings.filename_separator,
+                        chunk_size=1,
                         should_cancel=lambda: worker.is_cancelled,
                     )
                     llm_elapsed = time.perf_counter() - t0
 
                     if res.error:
-                        for it in batch:
-                            key = str(it.path)
-                            upd = res.by_path.get(key) if res.by_path else None
-                            if upd:
-                                idx = self._scan_index_by_path.get(key)
-                                if idx is None:
-                                    continue
-                                cur = self._scan_items[idx]
-                                updated = replace(
-                                    cur,
-                                    status="classified",
-                                    category=upd.get("category") or cur.category,
-                                    reference_year=upd.get("reference_year") or cur.reference_year,
-                                    proposed_name=upd.get("proposed_name") or cur.proposed_name,
-                                    summary=upd.get("summary") or cur.summary,
-                                    model_used=str(upd.get("model_used") or cur.model_used or ""),
-                                    reason=None,
-                                    classify_time_s=llm_elapsed,
-                                    classify_llm_time_s=llm_elapsed,
-                                    classify_model_used=str(upd.get("model_used") or cur.model_used or ""),
-                                )
-                                self.call_from_thread(apply_norm, key, updated)
-                                continue
-                            idx = self._scan_index_by_path.get(key)
-                            if idx is None:
-                                continue
+                        reason = "Classification stopped" if worker.is_cancelled else f"Classification error: {res.error}"
+                        idx = self._scan_index_by_path.get(path_str)
+                        if idx is not None:
                             cur = self._scan_items[idx]
                             if cur.status == "classifying":
-                                reason = (
-                                    "Classification stopped"
-                                    if worker.is_cancelled
-                                    else f"Classification error: {res.error}"
-                                )
-                                self.call_from_thread(apply_norm, key, replace(cur, status="scanned", reason=reason))
-                        if worker.is_cancelled:
-                            break
+                                self.call_from_thread(apply_norm, path_str, replace(cur, status="scanned", reason=reason))
                         continue
 
-                    for it in batch:
-                        if worker.is_cancelled:
-                            break
-                        key = str(it.path)
-                        upd = res.by_path.get(key)
-                        if not upd:
-                            continue
-                        idx = self._scan_index_by_path.get(key)
-                        if idx is None:
-                            continue
-                        cur = self._scan_items[idx]
-                        updated = replace(
-                            cur,
-                            status="classified",
-                            category=upd.get("category") or cur.category,
-                            reference_year=upd.get("reference_year") or cur.reference_year,
-                            proposed_name=upd.get("proposed_name") or cur.proposed_name,
-                            summary=upd.get("summary") or cur.summary,
-                            model_used=str(upd.get("model_used") or cur.model_used or ""),
-                            reason=None,
-                            classify_time_s=llm_elapsed,
-                            classify_llm_time_s=llm_elapsed,
-                            classify_model_used=str(upd.get("model_used") or cur.model_used or ""),
-                        )
-                        self.call_from_thread(apply_norm, key, updated)
+                    upd = res.by_path.get(path_str) if res.by_path else None
+                    if not upd:
+                        idx = self._scan_index_by_path.get(path_str)
+                        if idx is not None:
+                            cur = self._scan_items[idx]
+                            if cur.status == "classifying":
+                                self.call_from_thread(
+                                    apply_norm,
+                                    path_str,
+                                    replace(cur, status="scanned", reason="Classification error: no output"),
+                                )
+                        continue
+
+                    idx = self._scan_index_by_path.get(path_str)
+                    if idx is None:
+                        continue
+                    cur = self._scan_items[idx]
+                    updated = replace(
+                        cur,
+                        status="classified",
+                        category=upd.get("category") or cur.category or "unknown",
+                        reference_year=upd.get("reference_year") or cur.reference_year,
+                        proposed_name=upd.get("proposed_name") or cur.proposed_name,
+                        summary=upd.get("summary") or cur.summary,
+                        model_used=str(upd.get("model_used") or cur.model_used or model),
+                        reason=None,
+                        classify_time_s=llm_elapsed,
+                        classify_llm_time_s=llm_elapsed,
+                        classify_model_used=str(upd.get("model_used") or cur.model_used or model),
+                    )
+                    self.call_from_thread(apply_norm, path_str, updated)
                 self.call_from_thread(finish, cancelled=worker.is_cancelled)
             except Exception as exc:  # noqa: BLE001
                 # Ensure we never leave rows stuck in "classifying" if something goes wrong.
