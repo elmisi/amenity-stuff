@@ -46,8 +46,8 @@ class ArchiverApp(App):
     #details_text { padding: 0 2; }
 
     #meta { height: 1; }
-    #src { width: 1fr; text-overflow: ellipsis; }
-    #arc { width: 1fr; text-overflow: ellipsis; }
+    #src { width: 1fr; overflow: hidden; }
+    #arc { width: 1fr; overflow: hidden; }
     """
 
     BINDINGS = [
