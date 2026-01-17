@@ -25,7 +25,7 @@ DEFAULT_TAXONOMY_LINES: tuple[str, ...] = (
     "finance | Money, banking, invoices, bills | invoice; receipt; bank statement; utility bill",
     "legal | Contracts, policies, legal letters | contract; privacy policy; terms",
     "work | Employment, payroll, HR, professional docs | payslip; timesheet; employment agreement",
-    "personal | Personal documents, IDs, letters | personal letter; certificate; ID document; identity card; carta d'identità; documento identità",
+    "personal | Personal documents, IDs, letters | personal letter; certificate; ID document; identity card; carta d'identità; documento identità; handwritten note; notes; song lyrics; poem; appunti; testo canzone",
     "medical | Health and medical records | medical report; prescription; lab results",
     "education | Courses, certificates, school/university | certificate; transcript; course material",
     "media | Books, articles, images, audio/video | ebook; photo; screenshot",
