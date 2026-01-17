@@ -6,6 +6,8 @@ Terminal UI to organize files using a local LLM (via Ollama) with a 2-phase work
 
 Upcoming milestones include per-file approval and applying rename/move operations into an archive structured as `{category}/{year}`.
 
+See `PROJECT_SPEC.md` for a more detailed (and up-to-date) project specification.
+
 ## Run
 
 ```bash
