@@ -11,6 +11,7 @@ import time
 
 from .pdf_extract import extract_pdf_text_with_meta
 from .office_extract import extract_office_text_with_meta
+from .text_extract import extract_text_file_with_meta
 from .scanner import ScanItem
 from .taxonomy import DEFAULT_TAXONOMY_LINES, Taxonomy, parse_taxonomy_lines, taxonomy_to_prompt_block
 from .utils_filename import sanitize_name
@@ -1137,6 +1138,32 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         text, reason, meta = extract_office_text_with_meta(path)
         if not text:
             res = skipped(reason or "No extractable office text")
+            if meta:
+                res = replace(res, extract_method=meta.method, extract_time_s=meta.extract_time_s)
+            return res
+        year_hint_text = _extract_year_hint_from_text(text)
+        excerpt = _content_excerpt_for_llm(text, max_chars=14000)
+        model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
+        t0 = time.perf_counter()
+        res = _extract_facts_from_text(
+            model=model,
+            content=excerpt,
+            filename=path.name,
+            mtime_iso=item.mtime_iso,
+            base_url=config.ollama_base_url,
+            year_hint_filename=year_hint_filename,
+            year_hint_text=year_hint_text,
+            output_language=config.output_language,
+        )
+        llm_elapsed = time.perf_counter() - t0
+        if meta:
+            res = replace(res, extract_method=meta.method, extract_time_s=meta.extract_time_s)
+        return replace(res, llm_time_s=llm_elapsed)
+
+    if item.kind in {"json", "md", "txt", "rtf", "svg"}:
+        text, reason, meta = extract_text_file_with_meta(path)
+        if not text:
+            res = skipped(reason or "No extractable text")
             if meta:
                 res = replace(res, extract_method=meta.method, extract_time_s=meta.extract_time_s)
             return res

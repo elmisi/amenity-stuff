@@ -12,7 +12,21 @@ class Settings:
     source_root: Path
     archive_root: Path
     recursive: bool = True
-    include_extensions: tuple[str, ...] = ("pdf", "jpg", "jpeg", "png", "doc", "docx", "xls", "xlsx")
+    include_extensions: tuple[str, ...] = (
+        "pdf",
+        "jpg",
+        "jpeg",
+        "png",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "json",
+        "md",
+        "txt",
+        "rtf",
+        "svg",
+    )
     exclude_dirnames: tuple[str, ...] = (".git", ".venv", "ARCHIVE")
     output_language: str = "auto"  # auto | it | en
     taxonomy_lines: tuple[str, ...] = DEFAULT_TAXONOMY_LINES

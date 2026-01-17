@@ -86,6 +86,12 @@ If a PDF has no extractable text (i.e. it's effectively an image), or if you sca
 - Ubuntu / Linux Mint:
   - `sudo apt-get install libreoffice`
 
+### `.rtf` extraction (optional)
+RTF is supported without dependencies via a naive fallback, but you get better results with `unrtf`.
+
+- Ubuntu / Linux Mint:
+  - `sudo apt-get install unrtf`
+
 ## LLM Provider
 
 On startup the app tries to detect:
@@ -99,6 +105,7 @@ The table lists common formats found in the selected source folder:
 - `pdf`
 - images: `jpg/jpeg/png`
 - office: `doc/docx/xls/xlsx` (see optional dependencies above)
+- text: `txt/md/json/rtf/svg`
 
 ### Keys
 - `ctrl+r` reload dir
