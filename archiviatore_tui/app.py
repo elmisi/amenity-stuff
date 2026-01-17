@@ -40,7 +40,6 @@ class ArchiverApp(App):
     #top { height: 4; }
     #banner { height: 1; padding: 0 1; }
     #notes { height: 1; color: $text-muted; }
-    #hints { height: 1; color: $text-muted; }
     #files { height: 1fr; }
     #details_box { height: 9; border: round $accent; background: $panel; }
     #details_text { padding: 0 2; }
@@ -52,18 +51,18 @@ class ArchiverApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
+        Binding("s", "extract_row", "Scan", show=True),
+        Binding("c", "classify_row", "Classify", show=True),
+        Binding("r", "reset_row", "Reset", show=True),
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("f1", "help", "Help", show=True),
         Binding("f2", "settings", "Settings", show=True),
         Binding("ctrl+r", "scan", "Reload dir", show=False),
-        Binding("s", "extract_row", "Scan row", show=False),
         Binding("S", "extract_pending", "Scan pending", show=False),
-        Binding("c", "classify_row", "Classify row", show=False),
         Binding("C", "classify_batch", "Classify scanned", show=False),
         Binding("x", "stop_analysis", "Stop analysis", show=False),
         Binding("enter", "open_file", "Open file", show=False),
         Binding("return", "open_file", "Open file", show=False),
-        Binding("r", "reset_row", "Reset row", show=False),
         Binding("R", "reset_all", "Reset all", show=False),
     ]
 
@@ -87,7 +86,6 @@ class ArchiverApp(App):
                 yield Static(f"Archive: {self.settings.archive_root}", id="arc")
             yield Static("", id="banner")
             yield Static("Ready.", id="notes")
-            yield Static("", id="hints", markup=False)
 
         files = DataTable(id="files")
         files.add_column(" ", key="status", width=2)
@@ -976,11 +974,6 @@ class ArchiverApp(App):
                 error=err,
             )
         )
-        self.query_one("#hints", Static).update(self._hints_line())
-
-    @staticmethod
-    def _hints_line() -> str:
-        return "Hints: s scan • c classify • r reset"
 
     def _provider_problem(self) -> tuple[str | None, str]:
         """Return (problem, severity) for the active local setup."""
