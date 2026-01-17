@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib import metadata
+
 from textual.app import ComposeResult
 from textual.containers import Container
 from textual.screen import ModalScreen
@@ -20,22 +22,45 @@ class HelpScreen(ModalScreen[None]):
     ]
 
     def compose(self) -> ComposeResult:
+        try:
+            ver = metadata.version("amenity-stuff")
+        except Exception:
+            ver = "dev"
+
         yield Header(show_clock=False)
         with Container(id="dialog"):
             yield Static(
                 "\n".join(
                     [
-                        "How it works (current):",
-                        "- Ctrl+R reloads the source directory.",
-                        "- Scan extracts facts (text/OCR + LLM) and stores them in the local cache.",
-                        "- Classify uses scanned facts to assign category/year and propose a coherent filename.",
-                        "- Enter opens the selected file with the system default application.",
+                        f"amenity-stuff v{ver}",
+                        "Author: elmisi",
+                        "",
+                        "Purpose:",
+                        "Local-first TUI that scans a folder and prepares a clean archive plan by extracting facts,",
+                        "classifying files into a user taxonomy, and proposing better filenames.",
+                        "",
+                        "Workflow:",
+                        "1) Reload: load files from the source folder.",
+                        "2) Scan: extract text/OCR + call the local LLM to produce structured facts and a rich summary.",
+                        "3) Classify: use scanned facts to assign category/year and propose a coherent filename.",
+                        "4) Review: inspect per-file details in the bottom panel (no files are moved yet).",
                         "",
                         "Shortcuts:",
-                        "Scan: s (file) • S (pending) • x (stop)",
-                        "Classify: c (file) • C (scanned)",
-                        "Reset: r (row) • R (all)",
-                        "Settings: F2 • Quit: q",
+                        "F1      Show this help screen",
+                        "F2      Open settings (models, language, taxonomy, archive folder)",
+                        "Ctrl+R  Reload directory and refresh the file list",
+                        "Enter   Open selected file with the system default application",
+                        "",
+                        "s       Scan the selected row (force re-scan)",
+                        "S       Scan all pending files",
+                        "x       Stop an ongoing scan/classify task",
+                        "",
+                        "c       Classify the selected scanned row (force re-classify)",
+                        "C       Classify all scanned files",
+                        "",
+                        "r       Reset the selected row back to pending (clears cached result)",
+                        "R       Reset all rows back to pending (clears cache)",
+                        "q       Quit",
                     ]
                 )
             , markup=False)
