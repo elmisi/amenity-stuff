@@ -60,3 +60,8 @@ When refactoring, do not change functionality unless explicitly requested:
 - The current version is stored in `VERSION` and mirrored in `pyproject.toml`.
 - Bump the **patch** version for every commit on `main` to keep builds/reproducibility simple.
 - Helper: run `python3 scripts/bump_version.py` before committing (updates both files).
+
+## Local Installation (pipx)
+- After each change/commit, refresh the system-wide CLI entry with:
+  - `pipx install -e . --force`
+- Note: `pipx` manages its own virtualenv(s). Running it while your repo `.venv` is active is fine, but `pipx` will still install into the `pipx` environment.
