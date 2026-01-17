@@ -122,6 +122,96 @@ def _short_entity(entity: str) -> str:
     return " ".join(parts[:3]).strip()
 
 
+def _tokenize_for_match(text: str) -> list[str]:
+    t = (text or "").lower()
+    t = re.sub(r"[^\w\sÀ-ÖØ-öø-ÿ]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return [p for p in t.split() if p and (len(p) >= 3 or p.isdigit())]
+
+
+def _category_repair_from_taxonomy(
+    *,
+    taxonomy: Taxonomy,
+    summary_long: Optional[str],
+    facts_obj: dict,
+) -> Optional[str]:
+    """Attempt to map content to a taxonomy category without an LLM.
+
+    Uses user taxonomy examples/description as the weak supervision signal.
+    Returns None if ambiguous / insufficient evidence.
+    """
+
+    # Build a small searchable text from already-extracted signals.
+    fields: list[str] = []
+    for key in ("doc_type", "purpose"):
+        v = facts_obj.get(key)
+        if isinstance(v, str) and v.strip():
+            fields.append(v)
+    tags = facts_obj.get("tags")
+    if isinstance(tags, list):
+        fields.extend(str(t) for t in tags if isinstance(t, str))
+    people = facts_obj.get("people")
+    if isinstance(people, list) and people:
+        # Avoid biasing toward personal for every named document; still useful for disambiguation.
+        fields.append("people")
+    orgs = facts_obj.get("organizations")
+    if isinstance(orgs, list) and orgs:
+        fields.append("organization")
+    if isinstance(summary_long, str) and summary_long.strip():
+        fields.append(summary_long)
+    haystack = " ".join(fields)
+
+    if not haystack.strip():
+        return None
+
+    tokens = set(_tokenize_for_match(haystack))
+    haystack_l = haystack.lower()
+
+    scored: list[tuple[float, str]] = []
+    for cat in taxonomy.categories:
+        if cat.name == "unknown":
+            continue
+        kw_phrases: list[str] = []
+        if cat.name:
+            kw_phrases.append(cat.name)
+        if cat.description:
+            kw_phrases.append(cat.description)
+        if cat.examples:
+            kw_phrases.extend(cat.examples)
+
+        score = 0.0
+        for phrase in kw_phrases:
+            if not phrase:
+                continue
+            p = phrase.strip().lower()
+            if not p:
+                continue
+            # Phrase match is strong (e.g., "carta d'identità", "utility bill").
+            if len(p) >= 6 and p in haystack_l:
+                score += 3.0
+                continue
+            # Token match is weaker.
+            for tok in _tokenize_for_match(p):
+                if tok in tokens:
+                    score += 1.0
+
+        if score > 0:
+            scored.append((score, cat.name))
+
+    if not scored:
+        return None
+
+    scored.sort(reverse=True)
+    best_score, best_cat = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+    # Require a minimum signal and avoid ties.
+    if best_score < 3.0:
+        return None
+    if best_score - second_score < 1.0:
+        return None
+    return best_cat
+
+
 _MONTHS = {
     # it
     "gennaio": 1,
@@ -416,6 +506,14 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
             cat = row.get("category")
             if not isinstance(cat, str) or cat not in allowed:
                 cat = "unknown"
+            if cat == "unknown" and src:
+                repaired = _category_repair_from_taxonomy(
+                    taxonomy=taxonomy,
+                    summary_long=src.summary_long,
+                    facts_obj=_parse_facts_json(src.facts_json),
+                )
+                if repaired in allowed:
+                    cat = repaired
             year = row.get("reference_year")
             if not isinstance(year, str) or not re.fullmatch(r"(19\\d{2}|20\\d{2})", year.strip()):
                 year = None
