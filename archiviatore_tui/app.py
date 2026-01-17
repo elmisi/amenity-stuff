@@ -37,10 +37,10 @@ from .help_screen import HelpScreen
 class ArchiverApp(App):
     CSS = """
     Screen { layout: vertical; }
-    #top { height: auto; }
-    #banner { height: auto; padding: 0 1; }
-    #notes { height: auto; color: $text-muted; }
-    #shortcuts { height: auto; color: $text-muted; }
+    #top { height: 4; }
+    #banner { height: 1; padding: 0 1; }
+    #notes { height: 1; color: $text-muted; }
+    #shortcuts { height: 1; color: $text-muted; }
     #files { height: 1fr; }
     #details_box { height: 9; border: round $accent; background: $panel; }
     #details_text { padding: 0 2; }
