@@ -15,6 +15,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="amenity-stuff")
     sub = parser.add_subparsers(dest="command")
 
+    # Backward-compatible defaults: allow `amenity-stuff` (no subcommand) to run the TUI,
+    # and keep --source/--archive available at the top-level.
+    parser.add_argument(
+        "--source",
+        type=Path,
+        default=Path("."),
+        help="Source folder to analyze (default: .)",
+    )
+    parser.add_argument(
+        "--archive",
+        type=Path,
+        default=Path("./ARCHIVE"),
+        help="Archive root destination (default: ./ARCHIVE)",
+    )
+
     run = sub.add_parser("run", help="Run the TUI (default)")
     run.add_argument(
         "--source",
