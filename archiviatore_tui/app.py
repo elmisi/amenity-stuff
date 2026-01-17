@@ -53,6 +53,7 @@ class ArchiverApp(App):
         Binding("q", "quit", "Quit", show=True),
         Binding("s", "extract_row", "Scan", show=True),
         Binding("c", "classify_row", "Classify", show=True),
+        Binding("u", "unclassify_row", "Unclassify", show=True),
         Binding("r", "reset_row", "Reset", show=True),
         Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("f1", "help", "Help", show=True),
@@ -64,6 +65,7 @@ class ArchiverApp(App):
         Binding("enter", "open_file", "Open file", show=False),
         Binding("return", "open_file", "Open file", show=False),
         Binding("R", "reset_all", "Reset all", show=False),
+        Binding("U", "unclassify_all", "Unclassify all", show=False),
     ]
 
     def __init__(self, settings: Settings) -> None:
@@ -314,6 +316,88 @@ class ArchiverApp(App):
             for it in self._scan_items
         ]
         self._render_files()
+        self._update_details_from_cursor()
+        self._render_notes()
+
+    async def action_unclassify_row(self) -> None:
+        if self._analysis_task.running or self._scan_task.running:
+            return
+        files = self.query_one("#files", DataTable)
+        row_index = files.cursor_row
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        item = self._scan_items[row_index]
+        if item.status != "classified":
+            return
+        key = str(item.path)
+        updated = replace(
+            item,
+            status="scanned",
+            reason=None,
+            category=None,
+            reference_year=None,
+            proposed_name=None,
+            confidence=None,
+            analysis_time_s=None,
+            model_used=item.facts_model_used or item.model_used,
+            classify_time_s=None,
+            classify_llm_time_s=None,
+            classify_model_used=None,
+        )
+        self._scan_items[row_index] = updated
+        if self._cache:
+            self._cache.upsert(updated)
+            self._cache.save()
+        files.update_cell(key, "status", status_cell("scanned"))
+        files.update_cell(key, "category", "")
+        files.update_cell(key, "year", "")
+        self._update_details(row_index)
+        self._render_notes()
+
+    async def action_unclassify_all(self) -> None:
+        if self._analysis_task.running or self._scan_task.running:
+            return
+        self.push_screen(
+            ConfirmScreen(message="Unclassify ALL classified files (keep scan results)?"),
+            callback=self._on_unclassify_all_confirmed,
+            wait_for_dismiss=False,
+        )
+
+    def _on_unclassify_all_confirmed(self, result: ConfirmResult) -> None:
+        if not result.confirmed:
+            return
+        self._unclassify_all_impl()
+
+    def _unclassify_all_impl(self) -> None:
+        files = self.query_one("#files", DataTable)
+        any_changed = False
+        for idx, it in enumerate(list(self._scan_items)):
+            if it.status != "classified":
+                continue
+            any_changed = True
+            updated = replace(
+                it,
+                status="scanned",
+                reason=None,
+                category=None,
+                reference_year=None,
+                proposed_name=None,
+                confidence=None,
+                analysis_time_s=None,
+                model_used=it.facts_model_used or it.model_used,
+                classify_time_s=None,
+                classify_llm_time_s=None,
+                classify_model_used=None,
+            )
+            self._scan_items[idx] = updated
+            key = str(updated.path)
+            files.update_cell(key, "status", status_cell("scanned"))
+            files.update_cell(key, "category", "")
+            files.update_cell(key, "year", "")
+            if self._cache:
+                self._cache.upsert(updated)
+        if any_changed and self._cache:
+            self._cache.save()
         self._update_details_from_cursor()
         self._render_notes()
 
@@ -600,7 +684,7 @@ class ArchiverApp(App):
             text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
         model = text_models[0] if text_models else "qwen2.5:7b-instruct"
 
-        targets = [it for it in self._scan_items if it.status in {"scanned", "classified"}]
+        targets = [it for it in self._scan_items if it.status == "scanned"]
         if not targets:
             return
 
@@ -615,7 +699,7 @@ class ArchiverApp(App):
             if idx is None:
                 return
             it = self._scan_items[idx]
-            if it.status not in {"scanned", "classified"}:
+            if it.status != "scanned":
                 return
             self._scan_items[idx] = replace(it, status="classifying", reason=None)
             files.update_cell(path_str, "status", status_cell("classifying"))
