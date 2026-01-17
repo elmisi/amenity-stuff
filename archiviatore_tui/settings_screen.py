@@ -27,6 +27,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
     CSS = """
     SettingsScreen { layout: vertical; }
     #intro { height: auto; color: $text-muted; }
+    #provider { height: auto; border: round $accent; background: $panel; padding: 1 2; }
     #options { height: auto; border: round $accent; background: $panel; }
     #taxonomy_label { height: auto; padding: 1 0 0 0; }
     #taxonomy { height: 1fr; border: round $accent; }
@@ -53,8 +54,10 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         ocr_mode: str,
         archive_root: Path,
         available_models: tuple[str, ...],
+        provider_info: str,
     ) -> None:
         super().__init__()
+        self._provider_info = provider_info.strip()
         self._output_language = output_language if output_language in {"auto", "it", "en"} else "auto"
         self._taxonomy_lines = taxonomy_lines or DEFAULT_TAXONOMY_LINES
         self._text_model = text_model or "auto"
@@ -76,6 +79,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             "Settings: ↑/↓ select • Enter/←/→ change • t taxonomy • Ctrl+S save • Esc cancel",
             id="intro",
         )
+        yield Static(self._provider_info or "Provider: (unknown)", id="provider", markup=False)
         yield OptionList(*self._render_options(), id="options")
         yield Static("Taxonomy (one category per line): name | description | examples", id="taxonomy_label")
         yield TextArea("\n".join(self._taxonomy_lines).strip() + "\n", id="taxonomy", tab_behavior="indent")

@@ -80,7 +80,6 @@ def notes_line(
     classified: int,
     skipped: int,
     error: int,
-    task_state: str,
 ) -> str:
     bits = [
         f"files: {scan_items_total}" if scan_items_total else "files: 0",
@@ -91,6 +90,5 @@ def notes_line(
         f"classified: {classified}",
         f"skipped: {skipped}",
         f"error: {error}",
-        f"task: {task_state}",
     ]
     return " • ".join([b for b in bits if b])

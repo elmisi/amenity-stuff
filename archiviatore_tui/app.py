@@ -40,10 +40,14 @@ class ArchiverApp(App):
     #top { height: 4; }
     #banner { height: 1; padding: 0 1; }
     #notes { height: 1; color: $text-muted; }
-    #shortcuts { height: 1; color: $text-muted; }
+    #hints { height: 1; color: $text-muted; }
     #files { height: 1fr; }
     #details_box { height: 9; border: round $accent; background: $panel; }
     #details_text { padding: 0 2; }
+
+    #meta { height: 1; }
+    #src { width: 1fr; text-overflow: ellipsis; }
+    #arc { width: 1fr; text-overflow: ellipsis; }
     """
 
     BINDINGS = [
@@ -66,6 +70,7 @@ class ArchiverApp(App):
     def __init__(self, settings: Settings) -> None:
         super().__init__()
         self.settings = settings
+        self.title = app_title()
         self._discovery: DiscoveryResult | None = None
         self._scan_items: list[ScanItem] = []
         self._scan_index_by_path: dict[str, int] = {}
@@ -75,17 +80,14 @@ class ArchiverApp(App):
         self._provider_line: str = ""
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        yield Header(show_clock=False)
         with Container(id="top"):
-            with Horizontal():
-                yield Static(app_title(), id="title")
+            with Horizontal(id="meta"):
                 yield Static(f"Source: {self.settings.source_root}", id="src")
                 yield Static(f"Archive: {self.settings.archive_root}", id="arc")
-                yield Static(f"Max: {self.settings.max_files}", id="max")
-                yield Static(f"Lang: {self.settings.output_language}", id="lang")
             yield Static("", id="banner")
             yield Static("Ready.", id="notes")
-            yield Static("", id="shortcuts", markup=False)
+            yield Static("", id="hints", markup=False)
 
         files = DataTable(id="files")
         files.add_column(" ", key="status", width=2)
@@ -319,11 +321,19 @@ class ArchiverApp(App):
         if self._scan_task.running:
             return
         available_models: tuple[str, ...] = ()
+        provider_info = "Provider: (not detected yet)"
         if self._discovery:
+            provider_info = self._provider_line or "Provider: ollama (missing) • models: 0"
             for p in self._discovery.providers:
-                if p.name == "ollama" and p.available and p.models:
-                    available_models = p.models
-                    break
+                if p.name != "ollama":
+                    continue
+                available_models = p.models
+                break
+            if available_models:
+                shown = ", ".join(available_models[:8])
+                if len(available_models) > 8:
+                    shown += f" (+{len(available_models) - 8})"
+                provider_info = f"{provider_info}\nModels: {shown}"
         self.push_screen(
             SettingsScreen(
                 output_language=self.settings.output_language,
@@ -334,6 +344,7 @@ class ArchiverApp(App):
                 ocr_mode=self.settings.ocr_mode,
                 archive_root=self.settings.archive_root,
                 available_models=available_models,
+                provider_info=provider_info,
             ),
             callback=self._on_settings_done,
             wait_for_dismiss=False,
@@ -353,7 +364,6 @@ class ArchiverApp(App):
             filename_separator=result.filename_separator,
             ocr_mode=result.ocr_mode,
         )
-        self.query_one("#lang", Static).update(f"Lang: {self.settings.output_language}")
         self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
         self._save_app_config()
         self._render_notes()
@@ -394,7 +404,7 @@ class ArchiverApp(App):
         worker = self.run_worker(do_discover, thread=True)
         self._discovery = await worker.wait()
         self._provider_line = provider_summary(self._discovery, self.settings, model_picker=pick_model_candidates)
-        self.query_one("#title", Static).update(app_title(provider_line=self._provider_line))
+        self.title = app_title()
         self._render_notes()
 
     async def _run_scan(self) -> None:
@@ -945,7 +955,14 @@ class ArchiverApp(App):
         if self._scan_task.running:
             state = "scanning…"
 
-        banner_text, banner_style = self._banner_for_state(state=state, scanning=scanning, classifying=classifying)
+        problem, severity = self._provider_problem()
+        banner_text, banner_style = self._banner_for_state(
+            state=state,
+            scanning=scanning,
+            classifying=classifying,
+            problem=problem,
+            severity=severity,
+        )
         self.query_one("#banner", Static).update(Text(banner_text, style=banner_style))
         self.query_one("#notes", Static).update(
             notes_line(
@@ -957,31 +974,62 @@ class ArchiverApp(App):
                 classified=classified,
                 skipped=skipped,
                 error=err,
-                task_state=state,
             )
         )
-        self.query_one("#shortcuts", Static).update(self._shortcuts_line())
+        self.query_one("#hints", Static).update(self._hints_line())
 
     @staticmethod
-    def _shortcuts_line() -> str:
-        return (
-            "Scan: s=file S=pending x=stop • "
-            "Classify: c=file C=scanned • "
-            "Reset: r=row R=all • "
-            "Reload: Ctrl+R • "
-            "Settings: F2 • Help: F1 • Quit: q"
-        )
+    def _hints_line() -> str:
+        return "Hints: s scan • c classify • r reset"
+
+    def _provider_problem(self) -> tuple[str | None, str]:
+        """Return (problem, severity) for the active local setup."""
+        if not self._discovery:
+            return ("Detecting providers…", "info")
+        for p in self._discovery.providers:
+            if p.name != "ollama":
+                continue
+            if not p.available:
+                return ("Ollama is not available", "error")
+            if not p.models:
+                return ("No models found in Ollama", "error")
+            return (None, "ok")
+        return ("Ollama is not configured", "error")
 
     @staticmethod
-    def _banner_for_state(*, state: str, scanning: int, classifying: int) -> tuple[str, str]:
+    def _banner_for_state(
+        *,
+        state: str,
+        scanning: int,
+        classifying: int,
+        problem: str | None,
+        severity: str,
+    ) -> tuple[str, str]:
+        if severity == "error":
+            base = problem or "Error"
+            return (f"ERROR: {base}", "bold white on red")
+        if severity == "info" and state == "idle":
+            return ("Status: idle • Detecting providers…", "bold black on grey70")
         if state == "idle":
-            return ("IDLE", "bold black on grey70")
+            return ("Status: idle (no running task)", "bold black on grey70")
         if state.startswith("stopping"):
             return ("STOPPING…", "bold white on red")
         if state.startswith("scanning") and scanning:
-            return ("RUNNING: scanning pending files…", "bold white on blue")
+            msg = "RUNNING: scanning pending files…"
+            if problem:
+                msg += f" • {problem}"
+            return (msg, "bold white on blue")
         if state.startswith("classifying") and classifying:
-            return ("RUNNING: classifying scanned files…", "bold white on blue")
+            msg = "RUNNING: classifying scanned files…"
+            if problem:
+                msg += f" • {problem}"
+            return (msg, "bold white on blue")
         if state.startswith("scanning"):
-            return ("RUNNING: scanning directory…", "bold white on blue")
-        return ("RUNNING…", "bold white on blue")
+            msg = "RUNNING: scanning directory…"
+            if problem:
+                msg += f" • {problem}"
+            return (msg, "bold white on blue")
+        msg = "RUNNING…"
+        if problem:
+            msg += f" • {problem}"
+        return (msg, "bold white on blue")
