@@ -57,17 +57,19 @@ def provider_summary(discovery: "DiscoveryResult | None", settings: "Settings", 
         return ""
 
     text_models, vision_models = model_picker(discovery)
-    if settings.text_model and settings.text_model != "auto":
-        text = settings.text_model
-    else:
-        text = text_models[0] if text_models else "auto"
+    facts = settings.facts_model if settings.facts_model and settings.facts_model != "auto" else (text_models[0] if text_models else "auto")
+    classify = (
+        settings.classify_model
+        if settings.classify_model and settings.classify_model != "auto"
+        else (text_models[0] if text_models else "auto")
+    )
     if settings.vision_model and settings.vision_model != "auto":
         vision = settings.vision_model
     else:
         vision = vision_models[0] if vision_models else "auto"
 
     models_count = f"{len(models)} models" if models else "no models"
-    return f"{provider} • {models_count} • text={text} • vision={vision}"
+    return f"{provider} • {models_count} • facts={facts} • classify={classify} • vision={vision}"
 
 
 def notes_line(

@@ -16,7 +16,8 @@ from .taxonomy import DEFAULT_TAXONOMY_LINES, parse_taxonomy_lines
 class SettingsResult:
     output_language: str
     taxonomy_lines: tuple[str, ...]
-    text_model: str
+    facts_model: str
+    classify_model: str
     vision_model: str
     filename_separator: str
     ocr_mode: str
@@ -48,7 +49,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         *,
         output_language: str,
         taxonomy_lines: tuple[str, ...],
-        text_model: str,
+        facts_model: str,
+        classify_model: str,
         vision_model: str,
         filename_separator: str,
         ocr_mode: str,
@@ -60,7 +62,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         self._provider_info = provider_info.strip()
         self._output_language = output_language if output_language in {"auto", "it", "en"} else "auto"
         self._taxonomy_lines = taxonomy_lines or DEFAULT_TAXONOMY_LINES
-        self._text_model = text_model or "auto"
+        self._facts_model = facts_model or "auto"
+        self._classify_model = classify_model or "auto"
         self._vision_model = vision_model or "auto"
         self._archive_root = archive_root
         self._available_models = available_models
@@ -104,7 +107,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             SettingsResult(
                 output_language=self._output_language,
                 taxonomy_lines=self._taxonomy_lines,
-                text_model=self._text_model,
+                facts_model=self._facts_model,
+                classify_model=self._classify_model,
                 vision_model=self._vision_model,
                 filename_separator=self._filename_separator,
                 ocr_mode=self._ocr_mode,
@@ -134,30 +138,32 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 event.stop()
 
     def _activate_option(self, idx: int) -> None:
-        if idx in {0, 1, 2, 4, 5}:
+        if idx in {0, 1, 2, 3, 5, 6}:
             self._cycle_option(idx, forward=True)
             return
-        if idx == 3:
+        if idx == 4:
             self.app.push_screen(
                 ArchivePickerScreen(archive_root=self._archive_root),
                 callback=self._on_archive_picked,
                 wait_for_dismiss=False,
             )
             return
-        if idx == 6:
+        if idx == 7:
             self.action_focus_taxonomy()
             return
 
     def _cycle_option(self, idx: int, *, forward: bool) -> None:
         if idx == 0:
-            self._text_model = self._cycle_value(self._text_model, self._text_options, forward=forward)
+            self._facts_model = self._cycle_value(self._facts_model, self._text_options, forward=forward)
         elif idx == 1:
-            self._vision_model = self._cycle_value(self._vision_model, self._vision_options, forward=forward)
+            self._classify_model = self._cycle_value(self._classify_model, self._text_options, forward=forward)
         elif idx == 2:
+            self._vision_model = self._cycle_value(self._vision_model, self._vision_options, forward=forward)
+        elif idx == 3:
             self._output_language = self._cycle_value(self._output_language, self._lang_options, forward=forward)
-        elif idx == 4:
-            self._filename_separator = self._cycle_value(self._filename_separator, self._sep_options, forward=forward)
         elif idx == 5:
+            self._filename_separator = self._cycle_value(self._filename_separator, self._sep_options, forward=forward)
+        elif idx == 6:
             self._ocr_mode = self._cycle_value(self._ocr_mode, self._ocr_options, forward=forward)
         else:
             return
@@ -177,7 +183,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
 
     def _render_options(self) -> list[str]:
         return [
-            f"Text model: {self._text_model}",
+            f"Facts model: {self._facts_model}",
+            f"Classify model: {self._classify_model}",
             f"Vision model: {self._vision_model}",
             f"Output language: {self._output_language}",
             f"Archive folder: {self._archive_root}",
@@ -197,7 +204,8 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             SettingsResult(
                 output_language=self._output_language,
                 taxonomy_lines=lines,
-                text_model=self._text_model,
+                facts_model=self._facts_model,
+                classify_model=self._classify_model,
                 vision_model=self._vision_model,
                 filename_separator=self._filename_separator,
                 ocr_mode=self._ocr_mode,

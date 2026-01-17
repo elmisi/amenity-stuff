@@ -128,7 +128,8 @@ class ArchiverApp(App):
             exclude_dirnames=self.settings.exclude_dirnames,
             output_language=self.settings.output_language,
             taxonomy_lines=self.settings.taxonomy_lines,
-            text_model=self.settings.text_model,
+            facts_model=self.settings.facts_model,
+            classify_model=self.settings.classify_model,
             vision_model=self.settings.vision_model,
             filename_separator=self.settings.filename_separator,
             ocr_mode=self.settings.ocr_mode,
@@ -147,7 +148,8 @@ class ArchiverApp(App):
                 last_source_root=str(self.settings.source_root),
                 output_language=self.settings.output_language,
                 taxonomy_lines=self.settings.taxonomy_lines,
-                text_model=self.settings.text_model,
+                facts_model=self.settings.facts_model,
+                classify_model=self.settings.classify_model,
                 vision_model=self.settings.vision_model,
                 filename_separator=self.settings.filename_separator,
                 ocr_mode=self.settings.ocr_mode,
@@ -422,7 +424,8 @@ class ArchiverApp(App):
             SettingsScreen(
                 output_language=self.settings.output_language,
                 taxonomy_lines=self.settings.taxonomy_lines,
-                text_model=self.settings.text_model,
+                facts_model=self.settings.facts_model,
+                classify_model=self.settings.classify_model,
                 vision_model=self.settings.vision_model,
                 filename_separator=self.settings.filename_separator,
                 ocr_mode=self.settings.ocr_mode,
@@ -442,7 +445,8 @@ class ArchiverApp(App):
             self.settings,
             output_language=result.output_language,
             taxonomy_lines=result.taxonomy_lines,
-            text_model=result.text_model,
+            facts_model=result.facts_model,
+            classify_model=result.classify_model,
             vision_model=result.vision_model,
             archive_root=result.archive_root,
             filename_separator=result.filename_separator,
@@ -677,8 +681,11 @@ class ArchiverApp(App):
             return
         taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
         text_models, _ = pick_model_candidates(self._discovery)
-        if self.settings.text_model and self.settings.text_model != "auto":
-            text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
+        if self.settings.classify_model and self.settings.classify_model != "auto":
+            text_models = (
+                self.settings.classify_model,
+                *tuple(m for m in text_models if m != self.settings.classify_model),
+            )
         model = text_models[0] if text_models else "qwen2.5:7b-instruct"
 
         targets = [it for it in self._scan_items if it.status == "scanned"]
@@ -926,8 +933,11 @@ class ArchiverApp(App):
 
         taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
         text_models, _ = pick_model_candidates(self._discovery)
-        if self.settings.text_model and self.settings.text_model != "auto":
-            text_models = (self.settings.text_model, *tuple(m for m in text_models if m != self.settings.text_model))
+        if self.settings.classify_model and self.settings.classify_model != "auto":
+            text_models = (
+                self.settings.classify_model,
+                *tuple(m for m in text_models if m != self.settings.classify_model),
+            )
         model = text_models[0] if text_models else "qwen2.5:7b-instruct"
 
         key = str(it.path)

@@ -13,7 +13,8 @@ class AppConfig:
     last_source_root: Optional[str] = None
     output_language: str = "auto"  # auto | it | en
     taxonomy_lines: tuple[str, ...] = ()
-    text_model: str = "auto"
+    facts_model: str = "auto"
+    classify_model: str = "auto"
     vision_model: str = "auto"
     filename_separator: str = "space"  # space | underscore | dash
     ocr_mode: str = "balanced"  # fast | balanced | high
@@ -37,7 +38,9 @@ def load_config() -> AppConfig:
     last_source = data.get("last_source_root")
     output_language = data.get("output_language")
     taxonomy_lines = data.get("taxonomy_lines")
-    text_model = data.get("text_model")
+    facts_model = data.get("facts_model")
+    classify_model = data.get("classify_model")
+    legacy_text_model = data.get("text_model")
     vision_model = data.get("vision_model")
     filename_separator = data.get("filename_separator")
     ocr_mode = data.get("ocr_mode")
@@ -57,8 +60,15 @@ def load_config() -> AppConfig:
             if isinstance(v, str) and v.strip():
                 lines.append(v.rstrip("\n"))
         kwargs["taxonomy_lines"] = tuple(lines)
-    if isinstance(text_model, str) and text_model.strip():
-        kwargs["text_model"] = text_model.strip()
+    # Backward compat: older configs used a single "text_model" for both phases.
+    if isinstance(legacy_text_model, str) and legacy_text_model.strip():
+        legacy = legacy_text_model.strip()
+        kwargs["facts_model"] = legacy
+        kwargs["classify_model"] = legacy
+    if isinstance(facts_model, str) and facts_model.strip():
+        kwargs["facts_model"] = facts_model.strip()
+    if isinstance(classify_model, str) and classify_model.strip():
+        kwargs["classify_model"] = classify_model.strip()
     if isinstance(vision_model, str) and vision_model.strip():
         kwargs["vision_model"] = vision_model.strip()
     if isinstance(filename_separator, str) and filename_separator.strip():

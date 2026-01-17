@@ -37,7 +37,7 @@ amenity-stuff report --source /path/to/folder
 You can change:
 - output language (`auto`, `it`, `en`)
 - taxonomy (allowed categories)
-- models (text / vision), archive folder, filename separator, OCR mode
+- models (facts / classify / vision), archive folder, filename separator, OCR mode
 
 Press `F2` in the TUI to open Settings. Configuration is stored in `~/.config/amenity-stuff/config.json`.
 
