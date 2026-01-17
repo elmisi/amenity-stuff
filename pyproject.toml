@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amenity-stuff"
-version = "0.5.6"
+version = "0.5.7"
 description = "Terminal UI to analyze and organize files using a local LLM (Ollama)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,7 +22,7 @@ dependencies = [
 Repository = "https://github.com/elmisi/amenity-stuff"
 
 [project.scripts]
-amenity-stuff = "archiviatore_tui.__main__:main"
+amenity-stuff = "archiver.__main__:main"
 
 [tool.setuptools]
-packages = ["archiviatore_tui"]
+packages = ["archiver"]
