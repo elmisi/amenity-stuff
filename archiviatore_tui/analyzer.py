@@ -1163,6 +1163,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         caption = ""
         vision_model_used: str | None = None
         last_vision_error: str | None = None
+        cap_t0 = time.perf_counter()
         for vm in _vision_model_candidates(config):
             try:
                 cap = generate_with_image_file(
@@ -1182,6 +1183,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
             if caption:
                 vision_model_used = vm
                 break
+        cap_elapsed = time.perf_counter() - cap_t0
         if not caption:
             msg = "Empty caption" if not last_vision_error else f"Vision error: {last_vision_error}"
             return skipped(msg)
@@ -1202,7 +1204,15 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         used = model
         if vision_model_used:
             used = f"{model} (vision: {vision_model_used})"
-        return replace(res, llm_time_s=llm_elapsed, model_used=used)
+        return replace(
+            res,
+            llm_time_s=llm_elapsed,
+            model_used=used,
+            extract_method="vision",
+            extract_time_s=cap_elapsed,
+            ocr_time_s=None,
+            ocr_mode=None,
+        )
 
     return skipped("Unsupported file type")
 
@@ -1302,6 +1312,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             caption = ""
             vision_model_used: str | None = None
             last_vision_error: str | None = None
+            cap_t0 = time.perf_counter()
             for vm in _vision_model_candidates(config):
                 try:
                     cap = generate_with_image_file(
@@ -1321,6 +1332,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
                 if caption:
                     vision_model_used = vm
                     break
+            cap_elapsed = time.perf_counter() - cap_t0
             if not caption:
                 msg = "Empty caption" if not last_vision_error else f"Vision error: {last_vision_error}"
                 return skipped_with_year(msg, effective_year_hint)
@@ -1334,7 +1346,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
                 category_hint=category_hint,
             )
             llm_elapsed = time.perf_counter() - t0
-            res = replace(res, llm_time_s=llm_elapsed)
+            res = replace(res, llm_time_s=llm_elapsed, extract_method="vision", extract_time_s=cap_elapsed)
             if vision_model_used and res.model_used:
                 res = replace(res, model_used=f"{res.model_used} (vision: {vision_model_used})")
 
