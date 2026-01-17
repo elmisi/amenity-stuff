@@ -7,8 +7,10 @@ import sys
 import time
 from dataclasses import replace
 
+from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import get_current_worker
@@ -29,32 +31,36 @@ from .model_selection import pick_model_candidates
 from .task_builders import build_analysis_config
 from .ui_details import render_details
 from .task_state import TaskState
+from .help_screen import HelpScreen
 
 
 class ArchiverApp(App):
     CSS = """
     Screen { layout: vertical; }
-    #top { height: 2; }
+    #top { height: auto; }
+    #banner { height: auto; padding: 0 1; }
     #notes { height: auto; color: $text-muted; }
+    #shortcuts { height: auto; color: $text-muted; }
     #files { height: 1fr; }
     #details_box { height: 9; border: round $accent; background: $panel; }
     #details_text { padding: 0 2; }
     """
 
     BINDINGS = [
-        ("q", "quit", "Quit"),
-        ("ctrl+c", "quit", "Quit"),
-        ("ctrl+r", "scan", "Reload dir"),
-        ("s", "extract_row", "Scan row"),
-        ("S", "extract_pending", "Scan pending"),
-        ("c", "classify_row", "Classify row"),
-        ("C", "classify_batch", "Classify scanned"),
-        ("x", "stop_analysis", "Stop scan"),
-        ("enter", "open_file", "Open file"),
-        ("return", "open_file", "Open file"),
-        ("r", "reset_row", "Reset row"),
-        ("R", "reset_all", "Reset all"),
-        ("f2", "settings", "Settings"),
+        Binding("q", "quit", "Quit", show=True),
+        Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("f1", "help", "Help", show=True),
+        Binding("f2", "settings", "Settings", show=True),
+        Binding("ctrl+r", "scan", "Reload dir", show=False),
+        Binding("s", "extract_row", "Scan row", show=False),
+        Binding("S", "extract_pending", "Scan pending", show=False),
+        Binding("c", "classify_row", "Classify row", show=False),
+        Binding("C", "classify_batch", "Classify scanned", show=False),
+        Binding("x", "stop_analysis", "Stop analysis", show=False),
+        Binding("enter", "open_file", "Open file", show=False),
+        Binding("return", "open_file", "Open file", show=False),
+        Binding("r", "reset_row", "Reset row", show=False),
+        Binding("R", "reset_all", "Reset all", show=False),
     ]
 
     def __init__(self, settings: Settings) -> None:
@@ -77,7 +83,9 @@ class ArchiverApp(App):
                 yield Static(f"Archive: {self.settings.archive_root}", id="arc")
                 yield Static(f"Max: {self.settings.max_files}", id="max")
                 yield Static(f"Lang: {self.settings.output_language}", id="lang")
+            yield Static("", id="banner")
             yield Static("Ready.", id="notes")
+            yield Static("", id="shortcuts")
 
         files = DataTable(id="files")
         files.add_column(" ", key="status", width=2)
@@ -331,6 +339,9 @@ class ArchiverApp(App):
             wait_for_dismiss=False,
         )
 
+    async def action_help(self) -> None:
+        self.push_screen(HelpScreen(), wait_for_dismiss=False)
+
     def _on_settings_done(self, result: SettingsResult) -> None:
         self.settings = replace(
             self.settings,
@@ -490,6 +501,7 @@ class ArchiverApp(App):
                 classify_model_used=None,
             )
             files.update_cell(path_str, "status", status_cell("scanning"))
+            self._render_notes()
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -501,6 +513,7 @@ class ArchiverApp(App):
             files.update_cell(path_str, "status", status_cell(new_item.status))
             files.update_cell(path_str, "category", new_item.category or "")
             files.update_cell(path_str, "year", new_item.reference_year or "")
+            self._render_notes()
             if files.cursor_row == idx:
                 self._update_details(idx)
             if self._cache:
@@ -592,6 +605,7 @@ class ArchiverApp(App):
                 return
             self._scan_items[idx] = replace(it, status="classifying", reason=None)
             files.update_cell(path_str, "status", status_cell("classifying"))
+            self._render_notes()
             if files.cursor_row == idx:
                 self._update_details(idx)
 
@@ -603,6 +617,7 @@ class ArchiverApp(App):
             files.update_cell(path_str, "status", status_cell(updated.status))
             files.update_cell(path_str, "category", updated.category or "")
             files.update_cell(path_str, "year", updated.reference_year or "")
+            self._render_notes()
             if files.cursor_row == idx:
                 self._update_details(idx)
             if self._cache:
@@ -930,6 +945,8 @@ class ArchiverApp(App):
         if self._scan_task.running:
             state = "scanning…"
 
+        banner_text, banner_style = self._banner_for_state(state=state, scanning=scanning, classifying=classifying)
+        self.query_one("#banner", Static).update(Text(banner_text, style=banner_style))
         self.query_one("#notes", Static).update(
             notes_line(
                 scan_items_total=total,
@@ -943,3 +960,28 @@ class ArchiverApp(App):
                 task_state=state,
             )
         )
+        self.query_one("#shortcuts", Static).update(self._shortcuts_line())
+
+    @staticmethod
+    def _shortcuts_line() -> str:
+        return (
+            "Scan: [s] file [S] pending [x] stop • "
+            "Classify: [c] file [C] scanned • "
+            "Reset: [r] row [R] all • "
+            "Reload: [Ctrl+R] • "
+            "Settings: [F2] • Help: [F1] • Quit: [q]"
+        )
+
+    @staticmethod
+    def _banner_for_state(*, state: str, scanning: int, classifying: int) -> tuple[str, str]:
+        if state == "idle":
+            return ("IDLE", "bold black on grey70")
+        if state.startswith("stopping"):
+            return ("STOPPING…", "bold white on red")
+        if state.startswith("scanning") and scanning:
+            return ("RUNNING: scanning pending files…", "bold white on blue")
+        if state.startswith("classifying") and classifying:
+            return ("RUNNING: classifying scanned files…", "bold white on blue")
+        if state.startswith("scanning"):
+            return ("RUNNING: scanning directory…", "bold white on blue")
+        return ("RUNNING…", "bold white on blue")
