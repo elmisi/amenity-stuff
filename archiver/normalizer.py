@@ -436,6 +436,67 @@ def normalize_items(
             return NormalizationResult(by_path=by_path, model_used=model, error="Cancelled")
         payload = []
         by_input_path = {str(it.path): it for it in batch}
+
+        def apply_row(row: dict, *, path: str) -> None:
+            src = by_input_path.get(path)
+            cat = row.get("category")
+            if not isinstance(cat, str) or cat not in allowed:
+                cat = "unknown"
+            if cat == "unknown" and src:
+                repaired = _category_repair_from_taxonomy(
+                    taxonomy=taxonomy,
+                    summary_long=src.summary_long,
+                    facts_obj=_parse_facts_json(src.facts_json),
+                )
+                if repaired in allowed:
+                    cat = repaired
+            year = row.get("reference_year")
+            if not isinstance(year, str) or not re.fullmatch(r"(19\\d{2}|20\\d{2})", year.strip()):
+                year = None
+            name = row.get("proposed_name")
+            if not isinstance(name, str) or not name.strip():
+                name = Path(path).name
+            name = _ensure_extension(_sanitize_name(name.strip()), Path(path).name)
+            name = _normalize_separators(name, sep=sep_label)
+
+            cur_facts = _parse_facts_json(src.facts_json) if src else {}
+
+            # If year is missing, derive it from facts/hints/summary.
+            if not year and src:
+                year = _best_year_from_facts(cur_facts, summary_long=src.summary_long, proposed_name=name)
+
+            # If the model output is generic, rebuild deterministically from summary_long + facts_json.
+            if src and src.summary_long:
+                orgs = cur_facts.get("organizations") if isinstance(cur_facts.get("organizations"), list) else []
+                org_hint = _short_entity(str(orgs[0])) if orgs else ""
+                low_signal = len(Path(name).stem) < 18 or _name_token_count(name) < 4
+                missing_entity = bool(org_hint) and (org_hint.lower().split()[0] not in name.lower())
+                if low_signal or missing_entity:
+                    better = _propose_name_from_summary_and_facts(
+                        summary_long=src.summary_long,
+                        facts_json=src.facts_json,
+                        reference_year=year,
+                        original_filename=Path(path).name,
+                        filename_separator=sep_label,
+                    )
+                    if better:
+                        name = better
+
+            summary = row.get("summary")
+            if not isinstance(summary, str):
+                summary = ""
+            conf = row.get("confidence")
+            conf_out = float(conf) if isinstance(conf, (int, float)) else None
+
+            by_path[path] = {
+                "category": cat,
+                "reference_year": year,
+                "proposed_name": name,
+                "summary": summary.strip()[:200] or None,
+                "confidence": conf_out,
+                "model_used": model,
+            }
+
         for it in batch:
             facts_obj = _parse_facts_json(it.facts_json)
             payload.append(
@@ -501,69 +562,27 @@ Output JSON schema (JSON list, same length as input, preserve 'path'):
         if not isinstance(data, list):
             return NormalizationResult(by_path=by_path, model_used=model, error="Unparseable output (JSON list)")
 
+        # Some models may fail to echo back the full absolute path. For single-item normalization we
+        # can safely apply the first output row to the only input item.
+        fallback_row: Optional[dict] = None
         for row in data:
             if not isinstance(row, dict):
                 continue
             path = row.get("path")
             if not isinstance(path, str) or not path:
+                if len(batch) == 1 and fallback_row is None:
+                    fallback_row = row
                 continue
             src = by_input_path.get(path)
-            cat = row.get("category")
-            if not isinstance(cat, str) or cat not in allowed:
-                cat = "unknown"
-            if cat == "unknown" and src:
-                repaired = _category_repair_from_taxonomy(
-                    taxonomy=taxonomy,
-                    summary_long=src.summary_long,
-                    facts_obj=_parse_facts_json(src.facts_json),
-                )
-                if repaired in allowed:
-                    cat = repaired
-            year = row.get("reference_year")
-            if not isinstance(year, str) or not re.fullmatch(r"(19\\d{2}|20\\d{2})", year.strip()):
-                year = None
-            name = row.get("proposed_name")
-            if not isinstance(name, str) or not name.strip():
-                name = Path(path).name
-            name = _ensure_extension(_sanitize_name(name.strip()), Path(path).name)
-            name = _normalize_separators(name, sep=sep_label)
+            # Ignore mismatched paths for multi-item batches; for per-file this is handled below.
+            if not src:
+                if len(batch) == 1 and fallback_row is None:
+                    fallback_row = row
+                continue
+            apply_row(row, path=path)
 
-            cur_facts = _parse_facts_json(src.facts_json) if src else {}
-
-            # If year is missing, derive it from facts/hints/summary.
-            if not year and src:
-                year = _best_year_from_facts(cur_facts, summary_long=src.summary_long, proposed_name=name)
-
-            # If the model output is generic, rebuild deterministically from summary_long + facts_json.
-            if src and src.summary_long:
-                orgs = cur_facts.get("organizations") if isinstance(cur_facts.get("organizations"), list) else []
-                org_hint = _short_entity(str(orgs[0])) if orgs else ""
-                low_signal = len(Path(name).stem) < 18 or _name_token_count(name) < 4
-                missing_entity = bool(org_hint) and (org_hint.lower().split()[0] not in name.lower())
-                if low_signal or missing_entity:
-                    better = _propose_name_from_summary_and_facts(
-                        summary_long=src.summary_long,
-                        facts_json=src.facts_json,
-                        reference_year=year,
-                        original_filename=Path(path).name,
-                        filename_separator=sep_label,
-                    )
-                    if better:
-                        name = better
-
-            summary = row.get("summary")
-            if not isinstance(summary, str):
-                summary = ""
-            conf = row.get("confidence")
-            conf_out = float(conf) if isinstance(conf, (int, float)) else None
-
-            by_path[path] = {
-                "category": cat,
-                "reference_year": year,
-                "proposed_name": name,
-                "summary": summary.strip()[:200] or None,
-                "confidence": conf_out,
-                "model_used": model,
-            }
+        if len(batch) == 1 and not by_path and fallback_row is not None:
+            only_path = str(batch[0].path)
+            apply_row(fallback_row, path=only_path)
 
     return NormalizationResult(by_path=by_path, model_used=model)
