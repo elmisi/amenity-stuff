@@ -6,7 +6,7 @@ Terminal UI to organize files using a local LLM (via Ollama) with a 2-phase work
 
 Upcoming milestones include per-file approval and applying rename/move operations into an archive structured as `{category}/{year}`.
 
-![amenity-stuff TUI screenshot](docs/amenity-stuff_v0_5_10_2026-01-17T20_57_39_236861.svg)
+![amenity-stuff TUI screenshot](docs/amenity-stuff_v0_6_2_2026-01-17T23_25_39_553932.svg)
 
 See `PROJECT_SPEC.md` for a more detailed (and up-to-date) project specification.
 
