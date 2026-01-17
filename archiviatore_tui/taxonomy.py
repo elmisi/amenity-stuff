@@ -22,14 +22,18 @@ class Taxonomy:
 
 
 DEFAULT_TAXONOMY_LINES: tuple[str, ...] = (
-    "finance | Money, banking, invoices, bills | invoice; receipt; bank statement; utility bill",
-    "legal | Contracts, policies, legal letters | contract; privacy policy; terms",
-    "work | Employment, payroll, HR, professional docs | payslip; timesheet; employment agreement",
-    "personal | Personal documents, IDs, letters | personal letter; certificate; ID document; identity card; carta d'identità; documento identità; handwritten note; notes; song lyrics; poem; appunti; testo canzone",
-    "medical | Health and medical records | medical report; prescription; lab results",
-    "education | Courses, certificates, school/university | certificate; transcript; course material",
-    "media | Books, articles, images, audio/video | ebook; photo; screenshot",
-    "technical | Technical docs, manuals, specs | manual; datasheet; API documentation",
+    "house | Home, property, rent, utilities, household paperwork | rent; lease; condominium; property tax; utility bill; electricity; gas; water; internet; home insurance; maintenance",
+    "purchases | Purchases and subscriptions | receipt; order confirmation; subscription; e-commerce; warranty; invoice for goods/services",
+    "travel | Travel and transportation | flight; hotel; booking; ticket; itinerary; car rental; travel insurance",
+    "tax | Taxes and public administration | F24; tax return; agency letter; payment notice; PagoPA; municipality tax",
+    "banking | Banking and payments (generic) | bank statement; transfer; card statement; account; payment receipt",
+    "legal | Legal documents and compliance | contract; terms; privacy policy; legal letter; complaint; power of attorney",
+    "work | Employment and professional documents | payslip; payroll; timesheet; employment agreement; HR",
+    "personal | Personal documents, IDs, letters, handwritten notes | identity card; passport; driving licence; certificate; personal letter; handwritten note; notes; song lyrics; poem",
+    "medical | Health and medical records | medical report; prescription; lab results; vaccination; invoice medical",
+    "edu | Education and training | certificate; transcript; diploma; course material; thesis; enrollment",
+    "media | Media and content | ebook; article; photo; screenshot; scan of photo; audio; video",
+    "tech | Technical docs | manual; datasheet; spec; API documentation; architecture; configuration; logs",
     "unknown | Unclassified / skipped |",
 )
 

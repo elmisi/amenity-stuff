@@ -244,8 +244,8 @@ def _category_hint_from_signals(*, path: Path, text: Optional[str]) -> Optional[
     sample = (text or "")[:8000].lower()
     hay = hay + " " + sample
 
-    # Energy / utilities invoices and bills -> finance.
-    finance_signals = [
+    # Home / utilities bills -> house.
+    house_signals = [
         "bolletta",
         "fattura",
         "riepilogo fatture",
@@ -261,14 +261,20 @@ def _category_hint_from_signals(*, path: Path, text: Optional[str]) -> Optional[
         "codice fiscale",
         "p.iva",
         "dolomiti energia",
+        "enel",
+        "iren",
+        "acea",
+        "acqua",
+        "luce",
+        "utenza",
     ]
-    if any(s in hay for s in finance_signals):
-        return "finance"
+    if any(s in hay for s in house_signals):
+        return "house"
 
-    # Technical docs / manuals -> technical.
+    # Technical docs / manuals -> tech.
     technical_signals = ["manual", "datasheet", "specification", "technical", "guide", "sdk", "api"]
     if any(s in hay for s in technical_signals):
-        return "technical"
+        return "tech"
 
     return None
 
