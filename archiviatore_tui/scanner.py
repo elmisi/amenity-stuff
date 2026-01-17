@@ -41,7 +41,7 @@ def _infer_kind(path: Path) -> Optional[str]:
     ext = path.suffix.lower().lstrip(".")
     if ext == "pdf":
         return "pdf"
-    if ext in {"jpg", "jpeg"}:
+    if ext in {"jpg", "jpeg", "png"}:
         return "image"
     return None
 

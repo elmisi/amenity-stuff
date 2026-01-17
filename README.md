@@ -37,8 +37,8 @@ Taxonomy format (one per line):
 
 ## Optional System Dependencies
 
-### OCR for scanned PDFs (recommended)
-If a PDF has no extractable text (i.e. it's effectively an image), amenity-stuff can use Tesseract OCR.
+### OCR for scanned PDFs and images (recommended)
+If a PDF has no extractable text (i.e. it's effectively an image), or if you scan documents as images, amenity-stuff can use Tesseract OCR.
 
 - Ubuntu / Linux Mint:
   - `sudo apt-get install tesseract-ocr tesseract-ocr-ita`
@@ -52,7 +52,7 @@ Models: the app uses a text model and (for images) a vision model; exact model n
 
 ## Scan (MVP)
 
-The table lists (up to `--max-files`) `pdf` and `jpg/jpeg` files found in the selected source folder.
+The table lists (up to `--max-files`) `pdf` and common image formats (`jpg/jpeg/png`) found in the selected source folder.
 
 ### Keys
 - `ctrl+r` reload dir

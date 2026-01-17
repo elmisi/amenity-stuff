@@ -14,7 +14,7 @@ class Settings:
     max_files: int = 100
     localai_base_url: Optional[str] = None
     recursive: bool = True
-    include_extensions: tuple[str, ...] = ("pdf", "jpg", "jpeg")
+    include_extensions: tuple[str, ...] = ("pdf", "jpg", "jpeg", "png")
     exclude_dirnames: tuple[str, ...] = (".git", ".venv", "ARCHIVIO")
     output_language: str = "auto"  # auto | it | en
     taxonomy_lines: tuple[str, ...] = DEFAULT_TAXONOMY_LINES

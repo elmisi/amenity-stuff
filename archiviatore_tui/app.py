@@ -7,6 +7,7 @@ import sys
 import time
 from dataclasses import replace
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
 from textual.widgets import DataTable, Footer, Header, Static
@@ -356,6 +357,17 @@ class ArchiverApp(App):
         if event.data_table.id != "files":
             return
         await self.action_open_file()
+
+    async def on_key(self, event: events.Key) -> None:
+        # DataTable may consume Enter depending on Textual versions/settings.
+        # Make "open file" reliable when the file table is focused.
+        if event.key not in {"enter", "return"}:
+            return
+        focused = self.focused
+        if not isinstance(focused, DataTable) or focused.id != "files":
+            return
+        await self.action_open_file()
+        event.stop()
 
     async def _run_discovery(self) -> None:
         notes_widget = self.query_one("#notes", Static)
