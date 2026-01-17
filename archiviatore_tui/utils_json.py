@@ -5,24 +5,39 @@ import re
 from typing import Optional
 
 
-def extract_json_dict(text: str) -> Optional[dict]:
-    """Best-effort extraction of a JSON object (dict) from model output."""
+_FENCE_RE = re.compile(r"```(?:json)?\\s*(.*?)\\s*```", flags=re.DOTALL | re.IGNORECASE)
+
+
+def _strip_code_fences(text: str) -> str:
     raw = (text or "").strip()
     if not raw:
+        return ""
+    m = _FENCE_RE.search(raw)
+    if m:
+        return m.group(1).strip()
+    return raw
+
+
+def extract_json_dict(text: str) -> Optional[dict]:
+    """Best-effort extraction of a JSON object (dict) from model output."""
+    raw = _strip_code_fences(text)
+    if not raw:
         return None
+    decoder = json.JSONDecoder()
     try:
         val = json.loads(raw)
         return val if isinstance(val, dict) else None
     except Exception:
         pass
-    match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        val = json.loads(match.group(0))
-        return val if isinstance(val, dict) else None
-    except Exception:
-        return None
+    starts = [m.start() for m in re.finditer(r"\{", raw)]
+    for start in starts:
+        try:
+            val, _end = decoder.raw_decode(raw[start:])
+        except Exception:
+            continue
+        if isinstance(val, dict):
+            return val
+    return None
 
 
 def extract_json_any(text: str) -> Optional[object]:
@@ -30,20 +45,20 @@ def extract_json_any(text: str) -> Optional[object]:
 
     Prefers lists first, then dicts, since batch operations often return JSON lists.
     """
-    raw = (text or "").strip()
+    raw = _strip_code_fences(text)
     if not raw:
         return None
+    decoder = json.JSONDecoder()
     try:
         return json.loads(raw)
     except Exception:
         pass
-    match = re.search(r"\[.*\]", raw, flags=re.DOTALL)
-    if not match:
-        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
-
+    starts = [m.start() for m in re.finditer(r"[\\[{]", raw)]
+    for start in starts:
+        try:
+            val, _end = decoder.raw_decode(raw[start:])
+        except Exception:
+            continue
+        if val is not None:
+            return val
+    return None

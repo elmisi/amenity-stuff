@@ -43,6 +43,7 @@ class AnalysisResult:
     model_used: Optional[str] = None
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
+    llm_raw_output: Optional[str] = None
     extract_method: Optional[str] = None
     extract_time_s: Optional[float] = None
     llm_time_s: Optional[float] = None
@@ -57,6 +58,7 @@ class FactsResult:
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
     confidence: Optional[float] = None
+    llm_raw_output: Optional[str] = None
     extract_method: Optional[str] = None
     extract_time_s: Optional[float] = None
     llm_time_s: Optional[float] = None
@@ -281,6 +283,34 @@ def _category_hint_from_signals(*, path: Path, text: Optional[str]) -> Optional[
 
 def _extract_json(text: str) -> Optional[dict]:
     return extract_json_dict(text)
+
+
+_MAX_LLM_RAW_OUTPUT_CHARS = 12000
+
+
+def _truncate_raw_output(text: str) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= _MAX_LLM_RAW_OUTPUT_CHARS:
+        return raw
+    return raw[: _MAX_LLM_RAW_OUTPUT_CHARS - 200] + "\n...[truncated]...\n" + raw[-200:]
+
+
+def _repair_json_dict_via_llm(*, model: str, raw_output: str, base_url: str) -> Optional[str]:
+    snippet = _truncate_raw_output(raw_output)
+    prompt = f"""
+You must output VALID JSON only (no code fences, no extra text).
+Fix the following output into a single JSON object. Keep the same keys and values as much as possible.
+
+Broken output:
+\"\"\"{snippet}\"\"\"
+"""
+    try:
+        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=60.0)
+    except Exception:
+        return None
+    if gen.error:
+        return None
+    return gen.response
 
 
 def _sanitize_name(name: str) -> str:
@@ -762,8 +792,19 @@ Output JSON schema:
         return AnalysisResult(status="error", reason=f"Ollama errore: {gen.error}", model_used=model)
     out = gen.response
     data = _extract_json(out)
+    llm_raw_output: Optional[str] = None
     if not isinstance(data, dict):
-        return AnalysisResult(status="skipped", reason="Unparseable output (JSON)", model_used=model)
+        llm_raw_output = _truncate_raw_output(out)
+        repaired = _repair_json_dict_via_llm(model=model, raw_output=out, base_url=base_url)
+        if repaired:
+            data = _extract_json(repaired)
+    if not isinstance(data, dict):
+        return AnalysisResult(
+            status="skipped",
+            reason="Unparseable output (JSON)",
+            model_used=model,
+            llm_raw_output=llm_raw_output,
+        )
 
     skip_reason = data.get("skip_reason")
     if isinstance(skip_reason, str) and skip_reason.strip():
@@ -811,7 +852,13 @@ Output JSON schema:
         conf = None
 
     if conf is not None and conf < 0.35:
-        return AnalysisResult(status="skipped", reason="Low confidence", confidence=conf, model_used=model)
+        return AnalysisResult(
+            status="skipped",
+            reason="Low confidence",
+            confidence=conf,
+            model_used=model,
+            llm_raw_output=llm_raw_output,
+        )
 
     # If the model produced a generic/low-signal name, rebuild it from summary+facts.
     if summary_long:
@@ -866,6 +913,7 @@ Output JSON schema:
         model_used=model,
         summary_long=(summary_long or "").strip()[:4000] or None,
         facts_json=facts_json,
+        llm_raw_output=llm_raw_output,
     )
 
 def _text_model_candidates(cfg: AnalysisConfig) -> tuple[str, ...]:
@@ -968,9 +1016,21 @@ Output JSON schema:
     if gen.error:
         return FactsResult(status="error", reason=f"Ollama errore: {gen.error}", model_used=model)
 
-    data = _extract_json(gen.response)
+    out = gen.response
+    data = _extract_json(out)
+    llm_raw_output: Optional[str] = None
     if not isinstance(data, dict):
-        return FactsResult(status="skipped", reason="Unparseable output (JSON)", model_used=model)
+        llm_raw_output = _truncate_raw_output(out)
+        repaired = _repair_json_dict_via_llm(model=model, raw_output=out, base_url=base_url)
+        if repaired:
+            data = _extract_json(repaired)
+    if not isinstance(data, dict):
+        return FactsResult(
+            status="skipped",
+            reason="Unparseable output (JSON)",
+            model_used=model,
+            llm_raw_output=llm_raw_output,
+        )
 
     skip_reason = data.get("skip_reason")
     if isinstance(skip_reason, str) and skip_reason.strip():
@@ -983,7 +1043,13 @@ Output JSON schema:
     confidence = data.get("confidence")
     conf = float(confidence) if isinstance(confidence, (int, float)) else None
     if conf is not None and conf < 0.30:
-        return FactsResult(status="skipped", reason="Low confidence", confidence=conf, model_used=model)
+        return FactsResult(
+            status="skipped",
+            reason="Low confidence",
+            confidence=conf,
+            model_used=model,
+            llm_raw_output=llm_raw_output,
+        )
 
     facts = {
         "language": data.get("language") if isinstance(data.get("language"), str) else None,
@@ -1007,6 +1073,7 @@ Output JSON schema:
         facts_json=facts_json,
         confidence=conf,
         model_used=model,
+        llm_raw_output=llm_raw_output,
     )
 
 

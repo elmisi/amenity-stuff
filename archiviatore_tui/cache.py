@@ -24,6 +24,7 @@ class CacheEntry:
     model_used: Optional[str] = None
     summary_long: Optional[str] = None
     facts_json: Optional[str] = None
+    llm_raw_output: Optional[str] = None
     extract_method: Optional[str] = None
     extract_time_s: Optional[float] = None
     llm_time_s: Optional[float] = None
@@ -72,6 +73,7 @@ class CacheStore:
                     model_used=entry.get("model_used"),
                     summary_long=entry.get("summary_long"),
                     facts_json=entry.get("facts_json"),
+                    llm_raw_output=entry.get("llm_raw_output"),
                     extract_method=entry.get("extract_method"),
                     extract_time_s=entry.get("extract_time_s"),
                     llm_time_s=entry.get("llm_time_s"),
@@ -125,6 +127,7 @@ class CacheStore:
             model_used=item.model_used,
             summary_long=item.summary_long,
             facts_json=item.facts_json,
+            llm_raw_output=item.llm_raw_output,
             extract_method=item.extract_method,
             extract_time_s=item.extract_time_s,
             llm_time_s=item.llm_time_s,
