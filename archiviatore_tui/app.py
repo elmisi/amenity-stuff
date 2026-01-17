@@ -602,12 +602,13 @@ class ArchiverApp(App):
                 self._cache.upsert(updated)
                 self._cache.save()
 
-        def finish(cancelled: bool) -> None:
-            if cancelled:
+        def finish(*, cancelled: bool, error_reason: str | None = None) -> None:
+            if cancelled or error_reason:
+                reason = error_reason or "Classification stopped"
                 for idx, it in enumerate(list(self._scan_items)):
                     if it.status != "classifying":
                         continue
-                    updated = replace(it, status="scanned", reason="Classification stopped")
+                    updated = replace(it, status="scanned", reason=reason)
                     self._scan_items[idx] = updated
                     key = str(updated.path)
                     files.update_cell(key, "status", status_cell("scanned"))
@@ -616,67 +617,75 @@ class ArchiverApp(App):
 
         def do_classify_background() -> None:
             worker = get_current_worker()
-            for it in targets:
+            try:
+                for it in targets:
+                    if worker.is_cancelled:
+                        break
+                    self.call_from_thread(mark_classifying, str(it.path))
                 if worker.is_cancelled:
-                    break
-                self.call_from_thread(mark_classifying, str(it.path))
-            if worker.is_cancelled:
-                self.call_from_thread(finish, True)
-                return
-            t0 = time.perf_counter()
-            res = normalize_items(
-                items=targets,
-                model=model,
-                base_url="http://localhost:11434",
-                taxonomy=taxonomy,
-                output_language=self.settings.output_language,
-                filename_separator=self.settings.filename_separator,
-            )
-            llm_elapsed = time.perf_counter() - t0
-            if res.error:
+                    self.call_from_thread(finish, cancelled=True)
+                    return
+                t0 = time.perf_counter()
+                res = normalize_items(
+                    items=targets,
+                    model=model,
+                    base_url="http://localhost:11434",
+                    taxonomy=taxonomy,
+                    output_language=self.settings.output_language,
+                    filename_separator=self.settings.filename_separator,
+                )
+                llm_elapsed = time.perf_counter() - t0
+                if res.error:
+                    for it in targets:
+                        if worker.is_cancelled:
+                            break
+                        key = str(it.path)
+                        idx = self._scan_index_by_path.get(key)
+                        if idx is None:
+                            continue
+                        cur = self._scan_items[idx]
+                        if cur.status == "classifying":
+                            self.call_from_thread(
+                                apply_norm,
+                                key,
+                                replace(cur, status="scanned", reason=f"Classification error: {res.error}"),
+                            )
+                    self.call_from_thread(finish, cancelled=worker.is_cancelled)
+                    return
+
                 for it in targets:
                     if worker.is_cancelled:
                         break
                     key = str(it.path)
+                    upd = res.by_path.get(key)
+                    if not upd:
+                        continue
                     idx = self._scan_index_by_path.get(key)
                     if idx is None:
                         continue
                     cur = self._scan_items[idx]
-                    if cur.status == "classifying":
-                        self.call_from_thread(
-                            apply_norm,
-                            key,
-                            replace(cur, status="scanned", reason=f"Classification error: {res.error}"),
-                        )
-                self.call_from_thread(finish, worker.is_cancelled)
-                return
-
-            for it in targets:
-                if worker.is_cancelled:
-                    break
-                key = str(it.path)
-                upd = res.by_path.get(key)
-                if not upd:
-                    continue
-                idx = self._scan_index_by_path.get(key)
-                if idx is None:
-                    continue
-                cur = self._scan_items[idx]
-                updated = replace(
-                    cur,
-                    status="classified",
-                    category=upd.get("category") or cur.category,
-                    reference_year=upd.get("reference_year") or cur.reference_year,
-                    proposed_name=upd.get("proposed_name") or cur.proposed_name,
-                    summary=upd.get("summary") or cur.summary,
-                    model_used=str(upd.get("model_used") or cur.model_used or ""),
-                    reason=None,
-                    classify_time_s=llm_elapsed,
-                    classify_llm_time_s=llm_elapsed,
-                    classify_model_used=str(upd.get("model_used") or cur.model_used or ""),
+                    updated = replace(
+                        cur,
+                        status="classified",
+                        category=upd.get("category") or cur.category,
+                        reference_year=upd.get("reference_year") or cur.reference_year,
+                        proposed_name=upd.get("proposed_name") or cur.proposed_name,
+                        summary=upd.get("summary") or cur.summary,
+                        model_used=str(upd.get("model_used") or cur.model_used or ""),
+                        reason=None,
+                        classify_time_s=llm_elapsed,
+                        classify_llm_time_s=llm_elapsed,
+                        classify_model_used=str(upd.get("model_used") or cur.model_used or ""),
+                    )
+                    self.call_from_thread(apply_norm, key, updated)
+                self.call_from_thread(finish, cancelled=worker.is_cancelled)
+            except Exception as exc:  # noqa: BLE001
+                # Ensure we never leave rows stuck in "classifying" if something goes wrong.
+                self.call_from_thread(
+                    finish,
+                    cancelled=False,
+                    error_reason=f"Classification crashed: {type(exc).__name__}",
                 )
-                self.call_from_thread(apply_norm, key, updated)
-            self.call_from_thread(finish, worker.is_cancelled)
 
         worker = self.run_worker(do_classify_background, thread=True, exclusive=True)
         self._analysis_task.worker = worker
