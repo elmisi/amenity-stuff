@@ -50,6 +50,7 @@ class ArchiverApp(App):
         ("C", "classify_batch", "Classify scanned"),
         ("x", "stop_analysis", "Stop scan"),
         ("enter", "open_file", "Open file"),
+        ("return", "open_file", "Open file"),
         ("r", "reset_row", "Reset row"),
         ("R", "reset_all", "Reset all"),
         ("f2", "settings", "Settings"),
@@ -350,6 +351,11 @@ class ArchiverApp(App):
         if event.data_table.id != "files":
             return
         self._update_details(event.coordinate.row)
+
+    async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "files":
+            return
+        await self.action_open_file()
 
     async def _run_discovery(self) -> None:
         notes_widget = self.query_one("#notes", Static)

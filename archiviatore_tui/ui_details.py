@@ -10,6 +10,23 @@ if TYPE_CHECKING:  # pragma: no cover
     from .settings import Settings
 
 
+def _format_bytes(size_bytes: int) -> str:
+    try:
+        size = float(size_bytes)
+    except Exception:
+        return ""
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    unit = units[0]
+    for u in units[1:]:
+        if size < 1024.0:
+            break
+        size /= 1024.0
+        unit = u
+    if unit == "B":
+        return f"{int(size)} {unit}"
+    return f"{size:.1f} {unit}"
+
+
 def _shorten_middle(text: str, max_width: int) -> str:
     if max_width <= 10 or len(text) <= max_width:
         return text
@@ -49,9 +66,11 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
     if max_width:
         abs_path = _shorten_middle(abs_path, max_width)
 
+    size = _format_bytes(int(item.size_bytes) if isinstance(item.size_bytes, int) else 0)
     meta_line = " • ".join(
         [
             f"Type: {item.kind}",
+            f"Size: {size}",
             f"Status: {item.status}",
             f"Category: {item.category or ''}",
             f"Year: {item.reference_year or ''}",
