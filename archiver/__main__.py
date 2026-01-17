@@ -20,20 +20,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--archive",
         type=Path,
-        default=Path("./ARCHIVIO"),
-        help="Archive root destination (default: ./ARCHIVIO)",
+        default=Path("./ARCHIVE"),
+        help="Archive root destination (default: ./ARCHIVE)",
     )
     parser.add_argument(
         "--max-files",
         type=int,
         default=100,
         help="Max files per batch (default: 100)",
-    )
-    parser.add_argument(
-        "--localai-base-url",
-        type=str,
-        default=None,
-        help="(deprecated) reserved for future providers",
     )
     return parser
 
@@ -44,15 +38,14 @@ def main() -> None:
     cfg = load_config()
     default_source = args.source
     default_archive = args.archive
-    if default_archive == Path("./ARCHIVIO") and cfg.last_archive_root:
+    if default_archive == Path("./ARCHIVE") and cfg.last_archive_root:
         default_archive = Path(cfg.last_archive_root)
-    skip_setup = bool(cfg.last_archive_root) and args.archive == Path("./ARCHIVIO")
+    skip_setup = bool(cfg.last_archive_root) and args.archive == Path("./ARCHIVE")
     taxonomy_lines = cfg.taxonomy_lines or DEFAULT_TAXONOMY_LINES
     settings = Settings(
         source_root=default_source,
         archive_root=default_archive,
         max_files=args.max_files,
-        localai_base_url=args.localai_base_url,
         output_language=cfg.output_language,
         taxonomy_lines=taxonomy_lines,
         text_model=cfg.text_model,

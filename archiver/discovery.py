@@ -65,14 +65,12 @@ def _discover_ollama() -> ProviderInfo:
         command=path,
     )
 
-def discover_providers(*, localai_base_url: Optional[str] = None) -> DiscoveryResult:
+def discover_providers() -> DiscoveryResult:
     providers: list[ProviderInfo] = []
     notes: list[str] = []
 
     ollama = _discover_ollama()
     providers.append(ollama)
-
-    _ = localai_base_url  # reserved for future providers
 
     # Reserved for future local model discovery (GGUF etc). Keep notes minimal in the main UI.
 

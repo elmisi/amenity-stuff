@@ -124,7 +124,6 @@ class ArchiverApp(App):
             source_root=setup.source_root,
             archive_root=setup.archive_root,
             max_files=self.settings.max_files,
-            localai_base_url=self.settings.localai_base_url,
             recursive=self.settings.recursive,
             include_extensions=self.settings.include_extensions,
             exclude_dirnames=self.settings.exclude_dirnames,
@@ -485,7 +484,7 @@ class ArchiverApp(App):
         notes_widget.update("Detecting local providers…")
 
         def do_discover() -> DiscoveryResult:
-            return discover_providers(localai_base_url=self.settings.localai_base_url)
+            return discover_providers()
 
         worker = self.run_worker(do_discover, thread=True)
         self._discovery = await worker.wait()
