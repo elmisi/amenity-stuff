@@ -235,8 +235,6 @@ def _extract_kmz_text(path: Path, *, max_chars: int) -> Optional[str]:
 
         root = ET.fromstring(xml)
     except Exception:
-        import re
-
         text = re.sub(r"<[^>]+>", " ", xml)
         text = " ".join(text.split())
         return text[:max_chars] if text else None
