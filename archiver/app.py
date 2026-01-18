@@ -844,25 +844,7 @@ class ArchiverApp(App):
         it = self._scan_items[row_index]
         if it.status not in {"classified", "skipped", "error"}:
             return
-
-        dest_abs, _dest_rel = archive_dest_for_item(it, settings=self.settings)
-        msg = "\n".join(
-            [
-                "Move selected file to archive?",
-                "",
-                f"From: {it.path}",
-                f"To:   {dest_abs}",
-                "",
-                "Note: existing files may get a numeric suffix.",
-            ]
-        )
-
-        def after_confirm(result: ConfirmResult) -> None:
-            if not result.confirmed:
-                return
-            asyncio.create_task(self._run_archive_targets([str(it.path)]))
-
-        self.push_screen(ConfirmScreen(message=msg), callback=after_confirm, wait_for_dismiss=False)
+        await self._run_archive_targets([str(it.path)])
 
     async def _run_archive_batch(self) -> None:
         if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
