@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
-from ..office_extract import OfficeExtractMeta, extract_office_text_with_meta
-from ..pdf_extract import PdfExtractMeta, extract_pdf_text_with_meta
 from .textish import extract_textish_with_meta
 from .types import TextExtractMeta
+from .office import OfficeExtractMeta, extract_office_text_with_meta
+from .pdf import PdfExtractMeta, extract_pdf_text_with_meta
 
 ExtractMeta = Union[PdfExtractMeta, OfficeExtractMeta, TextExtractMeta]
 
@@ -31,4 +31,3 @@ def extract_with_meta(
     if kind in {"json", "md", "txt", "rtf", "svg", "kmz"}:
         return extract_textish_with_meta(path, max_chars=max_chars)
     return None, "Unsupported file type", None
-
