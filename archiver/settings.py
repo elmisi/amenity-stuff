@@ -27,7 +27,7 @@ class Settings:
         "rtf",
         "svg",
     )
-    exclude_dirnames: tuple[str, ...] = (".git", ".venv", "ARCHIVE")
+    exclude_dirnames: tuple[str, ...] = (".git", ".venv", ".amenity-stuff", "ARCHIVE")
     output_language: str = "auto"  # auto | it | en
     taxonomy_lines: tuple[str, ...] = DEFAULT_TAXONOMY_LINES
     facts_model: str = "auto"
