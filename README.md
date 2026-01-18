@@ -139,6 +139,8 @@ Results are cached in `<source>/.amenity-stuff/cache.json` and reused on re-scan
 
 When you move files to the archive, a separate cache is maintained in `<archive>/.amenity-stuff/cache.json`,
 and the source cache entries are kept with status `moved` (including `moved_to`).
+
+An append-only move log is also written to `<archive>/.amenity-stuff/moves.jsonl` (one JSON record per moved file).
 - `r` invalidates cache for the selected file
 - `R` clears the cache for the whole batch
 - `u` keeps scan results but clears classification fields
