@@ -18,6 +18,7 @@ class AppConfig:
     vision_model: str = "auto"
     filename_separator: str = "space"  # space | underscore | dash
     ocr_mode: str = "balanced"  # fast | balanced | high
+    undated_folder_name: str = "undated"
 
 
 def _config_path() -> Path:
@@ -44,6 +45,7 @@ def load_config() -> AppConfig:
     vision_model = data.get("vision_model")
     filename_separator = data.get("filename_separator")
     ocr_mode = data.get("ocr_mode")
+    undated_folder_name = data.get("undated_folder_name")
 
     kwargs: dict[str, object] = {}
     if isinstance(last_archive, str) and last_archive.strip():
@@ -79,6 +81,10 @@ def load_config() -> AppConfig:
         mode = ocr_mode.strip().lower()
         if mode in {"fast", "balanced", "high"}:
             kwargs["ocr_mode"] = mode
+    if isinstance(undated_folder_name, str):
+        val = undated_folder_name.strip()
+        if val:
+            kwargs["undated_folder_name"] = val
     return AppConfig(**kwargs)  # type: ignore[arg-type]
 
 

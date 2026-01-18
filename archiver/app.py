@@ -153,6 +153,7 @@ class ArchiverApp(App):
                 vision_model=self.settings.vision_model,
                 filename_separator=self.settings.filename_separator,
                 ocr_mode=self.settings.ocr_mode,
+                undated_folder_name=self.settings.undated_folder_name,
             )
         )
 
@@ -429,6 +430,7 @@ class ArchiverApp(App):
                 vision_model=self.settings.vision_model,
                 filename_separator=self.settings.filename_separator,
                 ocr_mode=self.settings.ocr_mode,
+                undated_folder_name=self.settings.undated_folder_name,
                 archive_root=self.settings.archive_root,
                 available_models=available_models,
                 provider_info=provider_info,
@@ -451,6 +453,7 @@ class ArchiverApp(App):
             archive_root=result.archive_root,
             filename_separator=result.filename_separator,
             ocr_mode=result.ocr_mode,
+            undated_folder_name=result.undated_folder_name,
         )
         self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
         self._save_app_config()

@@ -21,6 +21,7 @@ class SettingsResult:
     vision_model: str
     filename_separator: str
     ocr_mode: str
+    undated_folder_name: str
     archive_root: Path
 
 
@@ -54,6 +55,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         vision_model: str,
         filename_separator: str,
         ocr_mode: str,
+        undated_folder_name: str,
         archive_root: Path,
         available_models: tuple[str, ...],
         provider_info: str,
@@ -69,6 +71,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         self._available_models = available_models
         self._filename_separator = filename_separator if filename_separator in {"space", "underscore", "dash"} else "space"
         self._ocr_mode = ocr_mode if ocr_mode in {"fast", "balanced", "high"} else "balanced"
+        self._undated_folder_name = undated_folder_name.strip() if (undated_folder_name or "").strip() else "undated"
 
         self._text_options = ("auto",) + tuple(self._filter_text_models(available_models))
         self._vision_options = ("auto",) + tuple(self._filter_vision_models(available_models))
@@ -112,6 +115,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 vision_model=self._vision_model,
                 filename_separator=self._filename_separator,
                 ocr_mode=self._ocr_mode,
+                undated_folder_name=self._undated_folder_name,
                 archive_root=self._archive_root,
             )
         )
@@ -149,6 +153,9 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             )
             return
         if idx == 7:
+            self._cycle_undated_name()
+            return
+        if idx == 8:
             self.action_focus_taxonomy()
             return
 
@@ -167,6 +174,17 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             self._ocr_mode = self._cycle_value(self._ocr_mode, self._ocr_options, forward=forward)
         else:
             return
+        self._refresh_options()
+
+    def _cycle_undated_name(self) -> None:
+        # Keep this simple for now: toggle between a few common choices.
+        options = ("undated", "unknown-year", "senza-anno")
+        cur = self._undated_folder_name
+        try:
+            i = options.index(cur)
+            self._undated_folder_name = options[(i + 1) % len(options)]
+        except Exception:
+            self._undated_folder_name = options[0]
         self._refresh_options()
 
     def _on_archive_picked(self, result: ArchivePickerResult) -> None:
@@ -190,6 +208,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
             f"Archive folder: {self._archive_root}",
             f"Filename separator: {self._filename_separator}",
             f"OCR mode: {self._ocr_mode}",
+            f"Undated folder: {self._undated_folder_name}",
             "Edit taxonomy (press Enter)",
         ]
 
@@ -209,6 +228,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
                 vision_model=self._vision_model,
                 filename_separator=self._filename_separator,
                 ocr_mode=self._ocr_mode,
+                undated_folder_name=self._undated_folder_name,
                 archive_root=self._archive_root,
             )
         )

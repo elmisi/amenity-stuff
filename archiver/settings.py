@@ -35,4 +35,5 @@ class Settings:
     vision_model: str = "auto"
     filename_separator: str = "space"  # space | underscore | dash
     ocr_mode: str = "balanced"  # fast | balanced | high
+    undated_folder_name: str = "undated"
     skip_initial_setup: bool = False
