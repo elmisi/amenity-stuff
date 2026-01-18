@@ -27,6 +27,7 @@ class Settings:
         "txt",
         "rtf",
         "svg",
+        "kmz",
     )
     exclude_dirnames: tuple[str, ...] = (".git", ".venv", ".amenity-stuff", "ARCHIVE")
     output_language: str = "auto"  # auto | it | en

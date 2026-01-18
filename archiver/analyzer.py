@@ -1160,7 +1160,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
             res = replace(res, extract_method=meta.method, extract_time_s=meta.extract_time_s)
         return replace(res, llm_time_s=llm_elapsed)
 
-    if item.kind in {"json", "md", "txt", "rtf", "svg"}:
+    if item.kind in {"json", "md", "txt", "rtf", "svg", "kmz"}:
         text, reason, meta = extract_text_file_with_meta(path)
         if not text:
             res = skipped(reason or "No extractable text")

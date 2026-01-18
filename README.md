@@ -103,7 +103,7 @@ The table lists common formats found in the selected source folder:
 - `pdf`
 - images: `jpg/jpeg/png`
 - office: `doc/docx/odt/xls/xlsx` (see optional dependencies above)
-- text: `txt/md/json/rtf/svg`
+- text: `txt/md/json/rtf/svg/kmz`
 
 ### Keys
 - `ctrl+r` reload dir
