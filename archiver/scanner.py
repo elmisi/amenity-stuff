@@ -92,11 +92,8 @@ def scan_files(
         if should_cancel and should_cancel():
             return
         ext = path.suffix.lower().lstrip(".")
-        if ext not in include:
-            return
-        kind = _infer_kind(path)
-        if not kind:
-            return
+        kind = _infer_kind(path) or (ext if ext else "unknown")
+        supported = bool(ext in include and _infer_kind(path))
         try:
             stat = path.stat()
             items.append(
@@ -105,6 +102,8 @@ def scan_files(
                     kind=kind,
                     size_bytes=stat.st_size,
                     mtime_iso=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                    status="pending" if supported else "skipped",
+                    reason=None if supported else "unsupported file type",
                 )
             )
         except OSError as exc:
