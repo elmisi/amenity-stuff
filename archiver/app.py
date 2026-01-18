@@ -21,6 +21,7 @@ from .config import AppConfig, save_config
 from .confirm_screen import ConfirmResult, ConfirmScreen
 from .discovery import DiscoveryResult, discover_providers
 from .normalizer import normalize_items
+from .archive_apply import apply_archive_move, archive_dest_for_item
 from .scanner import ScanItem, scan_files
 from .settings import Settings
 from .settings_screen import SettingsResult, SettingsScreen
@@ -53,6 +54,7 @@ class ArchiverApp(App):
         Binding("q", "quit", "Quit", show=True),
         Binding("s", "extract_row", "Scan", show=True),
         Binding("c", "classify_row", "Classify", show=True),
+        Binding("m", "archive_row", "Archive", show=True),
         Binding("u", "unclassify_row", "Unclassify", show=True),
         Binding("r", "reset_row", "Reset", show=True),
         Binding("ctrl+c", "quit", "Quit", show=False),
@@ -61,6 +63,7 @@ class ArchiverApp(App):
         Binding("ctrl+r", "scan", "Reload dir", show=False),
         Binding("S", "extract_pending", "Scan pending", show=False),
         Binding("C", "classify_batch", "Classify scanned", show=False),
+        Binding("M", "archive_batch", "Archive eligible", show=False),
         Binding("x", "stop_analysis", "Stop analysis", show=False),
         Binding("enter", "open_file", "Open file", show=False),
         Binding("return", "open_file", "Open file", show=False),
@@ -78,6 +81,7 @@ class ArchiverApp(App):
         self._analysis_task = TaskState()
         self._cache: CacheStore | None = None
         self._scan_task = TaskState()
+        self._archive_task = TaskState()
         self._provider_line: str = ""
 
     def compose(self) -> ComposeResult:
@@ -133,6 +137,7 @@ class ArchiverApp(App):
             vision_model=self.settings.vision_model,
             filename_separator=self.settings.filename_separator,
             ocr_mode=self.settings.ocr_mode,
+            undated_folder_name=self.settings.undated_folder_name,
             skip_initial_setup=self.settings.skip_initial_setup,
         )
         self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
@@ -178,6 +183,12 @@ class ArchiverApp(App):
     async def action_classify_batch(self) -> None:
         await self._run_classify_batch()
 
+    async def action_archive_row(self) -> None:
+        await self._run_archive_row()
+
+    async def action_archive_batch(self) -> None:
+        await self._run_archive_batch()
+
     async def action_open_file(self) -> None:
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -221,11 +232,14 @@ class ArchiverApp(App):
         if self._scan_task.running:
             self._scan_task.request_cancel()
             stopped_any = True
+        if self._archive_task.running:
+            self._archive_task.request_cancel()
+            stopped_any = True
         if stopped_any:
             self._render_notes()
 
     async def action_reset_row(self) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -270,7 +284,7 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def action_reset_all(self) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         self.push_screen(
             ConfirmScreen(message="Reset ALL files and clear cache?"),
@@ -321,7 +335,7 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def action_unclassify_row(self) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -356,7 +370,7 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def action_unclassify_all(self) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         self.push_screen(
             ConfirmScreen(message="Unclassify ALL classified files (keep scan results)?"),
@@ -403,7 +417,7 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def action_settings(self) -> None:
-        if self._analysis_task.running:
+        if self._analysis_task.running or self._archive_task.running:
             return
         if self._scan_task.running:
             return
@@ -499,6 +513,8 @@ class ArchiverApp(App):
         self._render_notes()
 
     async def _run_scan(self) -> None:
+        if self._analysis_task.running or self._archive_task.running:
+            return
         notes_widget = self.query_one("#notes", Static)
         notes_widget.update("Scanning files…")
 
@@ -575,6 +591,8 @@ class ArchiverApp(App):
         if self._analysis_task.running:
             return
         if self._scan_task.running:
+            return
+        if self._archive_task.running:
             return
         self._analysis_task.cancel_requested = False
         self._analysis_task.running = True
@@ -678,7 +696,7 @@ class ArchiverApp(App):
         self._analysis_task.worker = worker
 
     async def _run_classify_batch(self) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         if not self._discovery:
             return
@@ -816,8 +834,147 @@ class ArchiverApp(App):
         worker = self.run_worker(do_classify_background, thread=True, exclusive=True)
         self._analysis_task.worker = worker
 
+    async def _run_archive_row(self) -> None:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
+            return
+        files = self.query_one("#files", DataTable)
+        row_index = files.cursor_row
+        if row_index < 0 or row_index >= len(self._scan_items):
+            return
+        it = self._scan_items[row_index]
+        if it.status not in {"classified", "skipped", "error"}:
+            return
+
+        dest_abs, _dest_rel = archive_dest_for_item(it, settings=self.settings)
+        msg = "\n".join(
+            [
+                "Move selected file to archive?",
+                "",
+                f"From: {it.path}",
+                f"To:   {dest_abs}",
+                "",
+                "Note: existing files may get a numeric suffix.",
+            ]
+        )
+
+        def after_confirm(result: ConfirmResult) -> None:
+            if not result.confirmed:
+                return
+            asyncio.create_task(self._run_archive_targets([str(it.path)]))
+
+        self.push_screen(ConfirmScreen(message=msg), callback=after_confirm, wait_for_dismiss=False)
+
+    async def _run_archive_batch(self) -> None:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
+            return
+        targets = [it for it in self._scan_items if it.status in {"classified", "skipped", "error"}]
+        if not targets:
+            return
+        preview = [str(it.path) for it in targets[:3]]
+        more = "" if len(targets) <= 3 else f"\n… +{len(targets) - 3} more"
+        msg = "\n".join(
+            [
+                f"Move {len(targets)} eligible files to archive?",
+                "",
+                *[f"- {p}" for p in preview],
+                more,
+            ]
+        ).rstrip()
+
+        def after_confirm(result: ConfirmResult) -> None:
+            if not result.confirmed:
+                return
+            asyncio.create_task(self._run_archive_targets([str(it.path) for it in targets]))
+
+        self.push_screen(ConfirmScreen(message=msg), callback=after_confirm, wait_for_dismiss=False)
+
+    async def _run_archive_targets(self, keys: list[str]) -> None:
+        if self._archive_task.running:
+            return
+        files = self.query_one("#files", DataTable)
+
+        source_cache = self._cache
+        archive_cache = CacheStore(self.settings.archive_root)
+        archive_cache.load()
+
+        self._archive_task.cancel_requested = False
+        self._archive_task.running = True
+        self._render_notes()
+
+        prev_status_by_path: dict[str, str] = {}
+
+        def mark_moving(path_str: str, prev_status: str) -> None:
+            idx = self._scan_index_by_path.get(path_str)
+            if idx is None:
+                return
+            it = self._scan_items[idx]
+            if it.status not in {"classified", "skipped", "error"}:
+                return
+            prev_status_by_path[path_str] = prev_status
+            self._scan_items[idx] = replace(it, status="moving", reason=None)
+            files.update_cell(path_str, "status", status_cell("moving"))
+            self._render_notes()
+            if files.cursor_row == idx:
+                self._update_details(idx)
+
+        def apply_result(path_str: str, updated: ScanItem) -> None:
+            idx = self._scan_index_by_path.get(path_str)
+            if idx is None:
+                return
+            self._scan_items[idx] = updated
+            files.update_cell(path_str, "status", status_cell(updated.status))
+            self._render_notes()
+            if files.cursor_row == idx:
+                self._update_details(idx)
+            prev_status_by_path.pop(path_str, None)
+
+        def finish(cancelled: bool) -> None:
+            if cancelled:
+                for idx, it in enumerate(list(self._scan_items)):
+                    if it.status != "moving":
+                        continue
+                    prev = prev_status_by_path.get(str(it.path), "classified")
+                    updated = replace(it, status=prev, reason="Move stopped")
+                    self._scan_items[idx] = updated
+                    key = str(updated.path)
+                    files.update_cell(key, "status", status_cell(updated.status))
+            self._archive_task.running = False
+            self._render_notes()
+
+        def do_move_background() -> None:
+            worker = get_current_worker()
+            now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
+            for path_str in keys:
+                if worker.is_cancelled:
+                    break
+                idx = self._scan_index_by_path.get(path_str)
+                if idx is None:
+                    continue
+                it = self._scan_items[idx]
+                if it.status not in {"classified", "skipped", "error"}:
+                    continue
+                self.call_from_thread(mark_moving, path_str, it.status)
+                try:
+                    updated, _dest_rel = apply_archive_move(
+                        it,
+                        settings=self.settings,
+                        source_cache=source_cache,
+                        archive_cache=archive_cache,
+                        now_iso=now_iso,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    updated = replace(it, status="error", reason=f"Move failed: {type(exc).__name__}")
+                    if source_cache:
+                        source_cache.upsert(updated)
+                        source_cache.save()
+                self.call_from_thread(apply_result, path_str, updated)
+            self.call_from_thread(finish, worker.is_cancelled)
+
+        worker = self.run_worker(do_move_background, thread=True, exclusive=True)
+        self._archive_task.worker = worker
+
     async def _run_extract_row(self, *, force: bool) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         files = self.query_one("#files", DataTable)
         row_index = files.cursor_row
@@ -921,7 +1078,7 @@ class ArchiverApp(App):
         self._analysis_task.worker = worker
 
     async def _run_classify_row(self, *, force: bool) -> None:
-        if self._analysis_task.running or self._scan_task.running:
+        if self._analysis_task.running or self._scan_task.running or self._archive_task.running:
             return
         if not self._discovery:
             return
@@ -1058,6 +1215,8 @@ class ArchiverApp(App):
         scanned = sum(1 for i in self._scan_items if i.status == "scanned")
         classifying = sum(1 for i in self._scan_items if i.status == "classifying")
         classified = sum(1 for i in self._scan_items if i.status == "classified")
+        moving = sum(1 for i in self._scan_items if i.status == "moving")
+        moved = sum(1 for i in self._scan_items if i.status == "moved")
         skipped = sum(1 for i in self._scan_items if i.status == "skipped")
         err = sum(1 for i in self._scan_items if i.status == "error")
         total = len(self._scan_items)
@@ -1074,12 +1233,15 @@ class ArchiverApp(App):
                 state = "running…"
         if self._scan_task.running:
             state = "scanning…"
+        if self._archive_task.running:
+            state = "archiving…"
 
         problem, severity = self._provider_problem()
         banner_text, banner_style = self._banner_for_state(
             state=state,
             scanning=scanning,
             classifying=classifying,
+            moving=moving,
             problem=problem,
             severity=severity,
         )
@@ -1091,6 +1253,7 @@ class ArchiverApp(App):
                 scanned=scanned,
                 classifying=classifying,
                 classified=classified,
+                moved=moved,
                 skipped=skipped,
                 error=err,
             )
@@ -1117,6 +1280,7 @@ class ArchiverApp(App):
         state: str,
         scanning: int,
         classifying: int,
+        moving: int,
         problem: str | None,
         severity: str,
     ) -> tuple[str, str]:
@@ -1136,6 +1300,16 @@ class ArchiverApp(App):
             return (msg, "bold white on blue")
         if state.startswith("classifying") and classifying:
             msg = "RUNNING: classifying scanned files…"
+            if problem:
+                msg += f" • {problem}"
+            return (msg, "bold white on blue")
+        if state.startswith("archiving") and moving:
+            msg = "RUNNING: moving files to archive…"
+            if problem:
+                msg += f" • {problem}"
+            return (msg, "bold white on blue")
+        if state.startswith("archiving"):
+            msg = "RUNNING: archiving…"
             if problem:
                 msg += f" • {problem}"
             return (msg, "bold white on blue")

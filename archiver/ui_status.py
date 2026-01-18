@@ -35,8 +35,10 @@ def status_cell(status: str) -> Text:
         "pending": ("·", "bright_black"),
         "scanning": ("✓", "bright_blue"),
         "classifying": ("✓", "bright_blue"),
+        "moving": ("✓", "bright_blue"),
         "scanned": ("✓", "yellow"),
         "classified": ("✓", "green"),
+        "moved": ("✓", "cyan"),
         "skipped": ("✗", "red"),
         "error": ("✗", "red"),
     }.get(status, ("?", "bright_black"))
@@ -80,6 +82,7 @@ def notes_line(
     scanned: int,
     classifying: int,
     classified: int,
+    moved: int,
     skipped: int,
     error: int,
 ) -> str:
@@ -90,6 +93,7 @@ def notes_line(
         f"scanned: {scanned}",
         f"classifying: {classifying}",
         f"classified: {classified}",
+        f"moved: {moved}",
         f"skipped: {skipped}",
         f"error: {error}",
     ]

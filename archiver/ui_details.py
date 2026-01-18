@@ -110,6 +110,8 @@ def render_details(item: "ScanItem", *, settings: "Settings", max_width: int | N
     if perf_line:
         lines.append(perf_line)
     lines.append(f"Proposed name: {item.proposed_name or ''}")
+    if item.moved_to:
+        lines.append(f"Moved to: {item.moved_to}")
 
     if width >= 20:
         lines = [lines[0]] + [_shorten_end(l, width) if len(l) > width else l for l in lines[1:]]
