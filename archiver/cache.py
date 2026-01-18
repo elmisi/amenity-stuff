@@ -14,6 +14,7 @@ class CacheEntry:
     size_bytes: int
     mtime_iso: str
     status: str
+    moved_to: Optional[str] = None
     reason: Optional[str] = None
     category: Optional[str] = None
     reference_year: Optional[str] = None
@@ -63,6 +64,7 @@ class CacheStore:
                     size_bytes=int(entry.get("size_bytes", 0)),
                     mtime_iso=str(entry.get("mtime_iso", "")),
                     status=str(entry.get("status", "")),
+                    moved_to=entry.get("moved_to"),
                     reason=entry.get("reason"),
                     category=entry.get("category"),
                     reference_year=entry.get("reference_year"),
@@ -117,6 +119,7 @@ class CacheStore:
             size_bytes=item.size_bytes,
             mtime_iso=item.mtime_iso,
             status=item.status,
+            moved_to=item.moved_to,
             reason=item.reason,
             category=item.category,
             reference_year=item.reference_year,

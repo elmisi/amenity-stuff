@@ -14,6 +14,7 @@ class ScanItem:
     size_bytes: int
     mtime_iso: str
     status: str = "pending"
+    moved_to: Optional[str] = None
     reason: Optional[str] = None
     category: Optional[str] = None
     reference_year: Optional[str] = None
