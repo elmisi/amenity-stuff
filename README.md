@@ -102,7 +102,7 @@ Models: the app uses a text model and (for images) a vision model; exact model n
 The table lists common formats found in the selected source folder:
 - `pdf`
 - images: `jpg/jpeg/png`
-- office: `doc/docx/xls/xlsx` (see optional dependencies above)
+- office: `doc/docx/odt/xls/xlsx` (see optional dependencies above)
 - text: `txt/md/json/rtf/svg`
 
 ### Keys

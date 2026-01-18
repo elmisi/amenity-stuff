@@ -19,6 +19,7 @@ class Settings:
         "png",
         "doc",
         "docx",
+        "odt",
         "xls",
         "xlsx",
         "json",

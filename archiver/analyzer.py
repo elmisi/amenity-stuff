@@ -1134,7 +1134,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
             )
         return replace(res, llm_time_s=llm_elapsed)
 
-    if item.kind in {"doc", "docx", "xls", "xlsx"}:
+    if item.kind in {"doc", "docx", "odt", "xls", "xlsx"}:
         text, reason, meta = extract_office_text_with_meta(path)
         if not text:
             res = skipped(reason or "No extractable office text")

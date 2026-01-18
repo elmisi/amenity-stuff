@@ -45,7 +45,7 @@ def _infer_kind(path: Path) -> Optional[str]:
         return "pdf"
     if ext in {"jpg", "jpeg", "png"}:
         return "image"
-    if ext in {"doc", "docx", "xls", "xlsx"}:
+    if ext in {"doc", "docx", "odt", "xls", "xlsx"}:
         return ext
     if ext in {"json", "md", "txt", "rtf", "svg"}:
         return ext

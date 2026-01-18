@@ -37,6 +37,12 @@ def extract_office_text_with_meta(
             return None, "No extractable DOCX text", None
         return text, "docx", OfficeExtractMeta(method="docx", extract_time_s=time.perf_counter() - t0)
 
+    if ext == "odt":
+        text = _extract_odt_text(path, max_chars=max_chars)
+        if not text:
+            return None, "No extractable ODT text", None
+        return text, "odt", OfficeExtractMeta(method="odt", extract_time_s=time.perf_counter() - t0)
+
     if ext == "xlsx":
         text = _extract_xlsx_text(path, max_chars=max_chars)
         if not text:
@@ -136,6 +142,39 @@ def _extract_docx_text(path: Path, *, max_chars: int) -> Optional[str]:
         if sum(len(p) for p in parts) >= max_chars:
             break
     out = "\n".join(p for p in parts if p).strip()
+    return out[:max_chars] if out else None
+
+
+def _extract_odt_text(path: Path, *, max_chars: int) -> Optional[str]:
+    # ODT is a ZIP with XML content in content.xml (OpenDocument).
+    try:
+        with zipfile.ZipFile(path) as zf:
+            xml = zf.read("content.xml").decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    try:
+        from xml.etree import ElementTree as ET
+
+        root = ET.fromstring(xml)
+    except Exception:
+        import re
+
+        text = re.sub(r"<[^>]+>", " ", xml)
+        text = " ".join(text.split())
+        return text[:max_chars] if text else None
+
+    # Extract visible text nodes; ignore metadata-heavy elements.
+    parts: list[str] = []
+    for el in root.iter():
+        if sum(len(p) for p in parts) >= max_chars:
+            break
+        tag = str(el.tag)
+        if tag.endswith(("script", "style")):
+            continue
+        if el.text and el.text.strip():
+            parts.append(el.text.strip())
+    out = "\n".join(parts).strip()
     return out[:max_chars] if out else None
 
 
@@ -268,4 +307,3 @@ def _xlsx_sheet_texts(xml_bytes: bytes, shared_strings: list[str], *, budget_cel
         seen.add(p)
         deduped.append(p)
     return deduped, cells
-
