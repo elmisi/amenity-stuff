@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
+from .filetypes import infer_kind
 
 @dataclass(frozen=True)
 class ScanItem:
@@ -39,19 +40,6 @@ class ScanItem:
     classify_model_used: Optional[str] = None
 
 
-def _infer_kind(path: Path) -> Optional[str]:
-    ext = path.suffix.lower().lstrip(".")
-    if ext == "pdf":
-        return "pdf"
-    if ext in {"jpg", "jpeg", "png"}:
-        return "image"
-    if ext in {"doc", "docx", "odt", "xls", "xlsx"}:
-        return ext
-    if ext in {"json", "md", "txt", "rtf", "svg", "kmz"}:
-        return ext
-    return None
-
-
 def scan_files(
     source_root: Path,
     *,
@@ -80,7 +68,7 @@ def scan_files(
         return [
             ScanItem(
                 path=source_root,
-                kind=_infer_kind(source_root) or "unknown",
+                kind=infer_kind(source_root) or "unknown",
                 size_bytes=source_root.stat().st_size if source_root.exists() else 0,
                 mtime_iso=_mtime_iso(source_root) if source_root.exists() else "",
                 status="error",
@@ -92,8 +80,8 @@ def scan_files(
         if should_cancel and should_cancel():
             return
         ext = path.suffix.lower().lstrip(".")
-        kind = _infer_kind(path) or (ext if ext else "unknown")
-        supported = bool(ext in include and _infer_kind(path))
+        kind = infer_kind(path) or (ext if ext else "unknown")
+        supported = bool(ext in include and infer_kind(path))
         try:
             stat = path.stat()
             items.append(
