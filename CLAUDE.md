@@ -76,7 +76,7 @@ See **AGENTS.md** for detailed conventions. Key points:
 
 - **Never block the Textual event loop** with I/O, OCR, or LLM calls
 - Keep refactors behavior-preserving; move code in small steps
-- Bump **patch version** for every code change commit: `python3 scripts/bump_version.py`
-- Do NOT bump version for doc-only commits
+- Bump **patch version** only for Python code changes in `archiver/`: `python3 scripts/bump_version.py`
+- Do NOT bump version for: docs, shell scripts, config files
 - Commit messages: `type: description` (e.g., `fix: skip facts when summary_long missing`)
 - Use `pathlib.Path` for filesystem paths; add type hints on public functions

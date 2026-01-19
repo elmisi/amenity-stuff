@@ -229,7 +229,7 @@ fi
 
 # Model suggestions
 info "Suggested models (adjust based on your hardware):"
-printf "  ${BOLD}ollama pull qwen2.5:3b${NC}       # text (lightweight)\n"
+printf "  ${BOLD}ollama pull qwen2.5:3b-instruct${NC}  # text (lightweight)\n"
 printf "  ${BOLD}ollama pull moondream${NC}        # vision (for images)\n"
 printf "\n"
 info "For more capable hardware, consider larger models:"

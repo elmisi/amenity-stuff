@@ -58,11 +58,20 @@ When refactoring, do not change functionality unless explicitly requested:
 
 ## Versioning (Repo / App)
 - The current version is stored in `VERSION` and mirrored in `pyproject.toml`.
-- Bump the **patch** version for every code change commit on `main` to keep builds/reproducibility simple.
-- Do NOT bump the version for documentation-only commits.
+- Bump the **patch** version only for changes to **Python code** in `archiver/`.
+- Do NOT bump the version for:
+  - Documentation-only commits (README.md, AGENTS.md, CLAUDE.md, etc.)
+  - Shell scripts (install.sh, uninstall.sh)
+  - Configuration files
 - Helper: run `python3 scripts/bump_version.py` before committing (updates both files).
 
-## Local Installation (pipx)
-- After each change/commit, refresh the system-wide CLI entry with:
-  - `pipx install -e . --force`
-- Note: `pipx` manages its own virtualenv(s). Running it while your repo `.venv` is active is fine, but `pipx` will still install into the `pipx` environment.
+## Local Installation (development)
+- For development, use a local venv:
+  ```bash
+  python3 -m venv .venv
+  ./.venv/bin/pip install -e .
+  ```
+- To test the system-wide install, run `install.sh` locally or use:
+  ```bash
+  ~/.local/share/amenity-stuff/venv/bin/pip install -e .
+  ```
