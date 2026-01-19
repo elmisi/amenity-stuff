@@ -34,6 +34,7 @@ from .ui_details import render_details
 from .task_state import TaskState
 from .help_screen import HelpScreen
 from .ui_runtime import banner_for_state, count_statuses, derive_task_state, provider_problem
+from .item_mutations import mark_item_classifying, mark_item_scanning, reset_item_to_pending, unclassify_item
 
 
 class ArchiverApp(App):
@@ -248,32 +249,7 @@ class ArchiverApp(App):
             return
         item = self._scan_items[row_index]
         key = str(item.path)
-        reset = replace(
-            item,
-            status="pending",
-            reason=None,
-            category=None,
-            reference_year=None,
-            proposed_name=None,
-            summary=None,
-            summary_long=None,
-            facts_json=None,
-            llm_raw_output=None,
-            confidence=None,
-            analysis_time_s=None,
-            model_used=None,
-            extract_method=None,
-            extract_time_s=None,
-            llm_time_s=None,
-            ocr_time_s=None,
-            ocr_mode=None,
-            facts_time_s=None,
-            facts_llm_time_s=None,
-            facts_model_used=None,
-            classify_time_s=None,
-            classify_llm_time_s=None,
-            classify_model_used=None,
-        )
+        reset = reset_item_to_pending(item)
         self._scan_items[row_index] = reset
         if self._cache:
             self._cache.invalidate(item)
@@ -302,35 +278,7 @@ class ArchiverApp(App):
         if self._cache:
             self._cache.clear()
             self._cache.save()
-        self._scan_items = [
-            replace(
-                it,
-                status="pending",
-                reason=None,
-                category=None,
-                reference_year=None,
-                proposed_name=None,
-                summary=None,
-                summary_long=None,
-                facts_json=None,
-                llm_raw_output=None,
-                confidence=None,
-                analysis_time_s=None,
-                model_used=None,
-                extract_method=None,
-                extract_time_s=None,
-                llm_time_s=None,
-                ocr_time_s=None,
-                ocr_mode=None,
-                facts_time_s=None,
-                facts_llm_time_s=None,
-                facts_model_used=None,
-                classify_time_s=None,
-                classify_llm_time_s=None,
-                classify_model_used=None,
-            )
-            for it in self._scan_items
-        ]
+        self._scan_items = [reset_item_to_pending(it) for it in self._scan_items]
         self._render_files()
         self._update_details_from_cursor()
         self._render_notes()
@@ -346,20 +294,7 @@ class ArchiverApp(App):
         if item.status != "classified":
             return
         key = str(item.path)
-        updated = replace(
-            item,
-            status="scanned",
-            reason=None,
-            category=None,
-            reference_year=None,
-            proposed_name=None,
-            confidence=None,
-            analysis_time_s=None,
-            model_used=item.facts_model_used or item.model_used,
-            classify_time_s=None,
-            classify_llm_time_s=None,
-            classify_model_used=None,
-        )
+        updated = unclassify_item(item)
         self._scan_items[row_index] = updated
         if self._cache:
             self._cache.upsert(updated)
@@ -391,20 +326,7 @@ class ArchiverApp(App):
             if it.status != "classified":
                 continue
             any_changed = True
-            updated = replace(
-                it,
-                status="scanned",
-                reason=None,
-                category=None,
-                reference_year=None,
-                proposed_name=None,
-                confidence=None,
-                analysis_time_s=None,
-                model_used=it.facts_model_used or it.model_used,
-                classify_time_s=None,
-                classify_llm_time_s=None,
-                classify_model_used=None,
-            )
+            updated = unclassify_item(it)
             self._scan_items[idx] = updated
             key = str(updated.path)
             files.update_cell(key, "status", status_cell("scanned"))
@@ -608,19 +530,7 @@ class ArchiverApp(App):
             it = self._scan_items[idx]
             if it.status != "pending":
                 return
-            self._scan_items[idx] = replace(
-                it,
-                status="scanning",
-                reason=None,
-                category=None,
-                reference_year=None,
-                proposed_name=None,
-                summary=None,
-                llm_raw_output=None,
-                classify_time_s=None,
-                classify_llm_time_s=None,
-                classify_model_used=None,
-            )
+            self._scan_items[idx] = mark_item_scanning(it)
             files.update_cell(path_str, "status", status_cell("scanning"))
             self._render_notes()
             if files.cursor_row == idx:
@@ -727,7 +637,7 @@ class ArchiverApp(App):
             it = self._scan_items[idx]
             if it.status != "scanned":
                 return
-            self._scan_items[idx] = replace(it, status="classifying", reason=None)
+            self._scan_items[idx] = mark_item_classifying(it)
             files.update_cell(path_str, "status", status_cell("classifying"))
             self._render_notes()
             if files.cursor_row == idx:
@@ -967,35 +877,12 @@ class ArchiverApp(App):
         if self._cache:
             self._cache.invalidate(it)
             self._cache.save()
-        reset = replace(
-            it,
-            status="pending" if force else it.status,
-            reason=None,
-            category=None,
-            reference_year=None,
-            proposed_name=None,
-            summary=None,
-            summary_long=None,
-            facts_json=None,
-            llm_raw_output=None,
-            confidence=None,
-            analysis_time_s=None,
-            model_used=None,
-            extract_method=None,
-            extract_time_s=None,
-            llm_time_s=None,
-            ocr_time_s=None,
-            ocr_mode=None,
-            facts_time_s=None,
-            facts_llm_time_s=None,
-            facts_model_used=None,
-            classify_time_s=None,
-            classify_llm_time_s=None,
-            classify_model_used=None,
-        )
+        reset = reset_item_to_pending(it)
+        if not force:
+            reset = replace(reset, status=it.status)
         self._scan_items[row_index] = reset
         path_str = str(reset.path)
-        mark_item = replace(reset, status="scanning", reason=None)
+        mark_item = mark_item_scanning(reset)
         self._scan_items[row_index] = mark_item
         files.update_cell(path_str, "status", status_cell("scanning"))
         self._update_details(row_index)
@@ -1084,7 +971,7 @@ class ArchiverApp(App):
         model = text_models[0] if text_models else "qwen2.5:7b-instruct"
 
         key = str(it.path)
-        self._scan_items[row_index] = replace(it, status="classifying", reason=None)
+        self._scan_items[row_index] = mark_item_classifying(it)
         files.update_cell(key, "status", status_cell("classifying"))
         self._update_details(row_index)
         self._analysis_task.cancel_requested = False
