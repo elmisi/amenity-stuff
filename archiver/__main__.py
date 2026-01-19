@@ -81,6 +81,7 @@ def main() -> None:
         facts_model=cfg.facts_model,
         classify_model=cfg.classify_model,
         vision_model=cfg.vision_model,
+        vision_model_fallback=cfg.vision_model_fallback,
         filename_separator=cfg.filename_separator,
         ocr_mode=cfg.ocr_mode,
         undated_folder_name=cfg.undated_folder_name,

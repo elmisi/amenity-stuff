@@ -33,6 +33,7 @@ class Settings:
     facts_model: str = "auto"
     classify_model: str = "auto"
     vision_model: str = "auto"
+    vision_model_fallback: str = "none"  # none | auto | llava:7b | minicpm-v | ...
     filename_separator: str = "space"  # space | underscore | dash
     ocr_mode: str = "balanced"  # fast | balanced | high
     undated_folder_name: str = "undated"

@@ -29,6 +29,19 @@ def build_analysis_config(*, settings: "Settings", discovery: "DiscoveryResult |
     if settings.vision_model and settings.vision_model != "auto":
         vision_models = (settings.vision_model, *tuple(m for m in vision_models if m != settings.vision_model))
 
+    # Add fallback vision model if configured
+    if settings.vision_model_fallback and settings.vision_model_fallback not in ("none", "auto"):
+        # Add explicit fallback model after primary
+        fallback = settings.vision_model_fallback
+        if fallback not in vision_models:
+            vision_models = (*vision_models, fallback)
+    elif settings.vision_model_fallback == "auto" and len(vision_models) < 2:
+        # Auto fallback: add llava:7b if not already in the list
+        for candidate in ("llava:7b", "llava:13b", "minicpm-v"):
+            if candidate not in vision_models:
+                vision_models = (*vision_models, candidate)
+                break
+
     return AnalysisConfig(
         output_language=settings.output_language,
         taxonomy=taxonomy,

@@ -16,6 +16,7 @@ class AppConfig:
     facts_model: str = "auto"
     classify_model: str = "auto"
     vision_model: str = "auto"
+    vision_model_fallback: str = "none"  # none | auto | llava:7b | minicpm-v | ...
     filename_separator: str = "space"  # space | underscore | dash
     ocr_mode: str = "balanced"  # fast | balanced | high
     undated_folder_name: str = "undated"
@@ -60,6 +61,7 @@ def load_config() -> AppConfig:
     classify_model = data.get("classify_model")
     legacy_text_model = data.get("text_model")
     vision_model = data.get("vision_model")
+    vision_model_fallback = data.get("vision_model_fallback")
     filename_separator = data.get("filename_separator")
     ocr_mode = data.get("ocr_mode")
     undated_folder_name = data.get("undated_folder_name")
@@ -103,6 +105,8 @@ def load_config() -> AppConfig:
         kwargs["classify_model"] = classify_model.strip()
     if isinstance(vision_model, str) and vision_model.strip():
         kwargs["vision_model"] = vision_model.strip()
+    if isinstance(vision_model_fallback, str) and vision_model_fallback.strip():
+        kwargs["vision_model_fallback"] = vision_model_fallback.strip()
     if isinstance(filename_separator, str) and filename_separator.strip():
         sep = filename_separator.strip().lower()
         if sep in {"space", "underscore", "dash"}:
