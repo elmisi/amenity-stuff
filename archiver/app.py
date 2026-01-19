@@ -24,6 +24,7 @@ from .scanner import ScanItem, scan_files
 from .settings import Settings
 from .settings_screen import SettingsResult, SettingsScreen
 from .setup_screen import SetupResult, SetupScreen
+from .setup_logic import app_config_from_settings, settings_from_setup
 from .taxonomy import parse_taxonomy_lines
 from .ui_status import app_title, notes_line, provider_summary, status_cell
 from .model_selection import pick_model_candidates
@@ -127,22 +128,7 @@ class ArchiverApp(App):
         asyncio.create_task(self._post_setup())
 
     def _apply_setup(self, *, setup: SetupResult) -> None:
-        self.settings = Settings(
-            source_root=setup.source_root,
-            archive_root=setup.archive_root,
-            recursive=self.settings.recursive,
-            include_extensions=self.settings.include_extensions,
-            exclude_dirnames=self.settings.exclude_dirnames,
-            output_language=self.settings.output_language,
-            taxonomy_lines=self.settings.taxonomy_lines,
-            facts_model=self.settings.facts_model,
-            classify_model=self.settings.classify_model,
-            vision_model=self.settings.vision_model,
-            filename_separator=self.settings.filename_separator,
-            ocr_mode=self.settings.ocr_mode,
-            undated_folder_name=self.settings.undated_folder_name,
-            skip_initial_setup=self.settings.skip_initial_setup,
-        )
+        self.settings = settings_from_setup(current=self.settings, setup=setup)
         self.query_one("#src", Static).update(f"Source: {self.settings.source_root}")
         self.query_one("#arc", Static).update(f"Archive: {self.settings.archive_root}")
         self._cache = CacheStore(self.settings.source_root)
@@ -150,20 +136,7 @@ class ArchiverApp(App):
         self._save_app_config()
 
     def _save_app_config(self) -> None:
-        save_config(
-            AppConfig(
-                last_archive_root=str(self.settings.archive_root),
-                last_source_root=str(self.settings.source_root),
-                output_language=self.settings.output_language,
-                taxonomy_lines=self.settings.taxonomy_lines,
-                facts_model=self.settings.facts_model,
-                classify_model=self.settings.classify_model,
-                vision_model=self.settings.vision_model,
-                filename_separator=self.settings.filename_separator,
-                ocr_mode=self.settings.ocr_mode,
-                undated_folder_name=self.settings.undated_folder_name,
-            )
-        )
+        save_config(app_config_from_settings(self.settings))
 
     async def _post_setup(self) -> None:
         await self._run_discovery()
