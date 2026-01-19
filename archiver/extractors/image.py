@@ -153,31 +153,57 @@ def caption_image(
     prompt: str,
     base_url: str,
     timeout_s: float = 180.0,
+    max_retries: int = 1,
 ) -> tuple[str, ImageCaptionMeta]:
-    """Try a list of vision models until one returns a caption (best-effort)."""
+    """Try a list of vision models until one returns a caption (best-effort).
+
+    Includes retry logic for timeout errors.
+    """
     caption = ""
     used: str | None = None
     last_error: str | None = None
     t0 = time.perf_counter()
     for vm in vision_models:
-        try:
-            cap = generate_with_image_file(
-                model=vm,
-                prompt=prompt,
-                image_path=str(image_path),
-                base_url=base_url,
-                timeout_s=timeout_s,
-            )
-        except Exception as exc:  # noqa: BLE001
-            last_error = f"{type(exc).__name__}"
-            continue
-        if cap.error:
-            last_error = cap.error
-            continue
-        caption = (cap.response or "").strip()
-        if caption:
-            used = vm
+        retries = 0
+        while retries <= max_retries:
+            try:
+                cap = generate_with_image_file(
+                    model=vm,
+                    prompt=prompt,
+                    image_path=str(image_path),
+                    base_url=base_url,
+                    timeout_s=timeout_s,
+                )
+            except TimeoutError:
+                retries += 1
+                last_error = "TimeoutError"
+                if retries <= max_retries:
+                    continue  # Retry same model
+                break  # Move to next model
+            except Exception as exc:  # noqa: BLE001
+                last_error = f"{type(exc).__name__}"
+                break  # Move to next model (don't retry non-timeout errors)
+
+            if cap.error:
+                # Check if error looks like a timeout
+                if "timeout" in (cap.error or "").lower():
+                    retries += 1
+                    last_error = cap.error
+                    if retries <= max_retries:
+                        continue  # Retry
+                last_error = cap.error
+                break  # Move to next model
+
+            caption = (cap.response or "").strip()
+            if caption:
+                used = vm
+                break
+            # Empty response - move to next model
+            last_error = "Empty response"
             break
+
+        if caption:
+            break  # Success, exit outer loop
 
     elapsed = time.perf_counter() - t0
     return caption, ImageCaptionMeta(caption_time_s=elapsed, vision_model_used=used, last_error=last_error)
