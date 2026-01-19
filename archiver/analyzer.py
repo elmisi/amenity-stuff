@@ -34,6 +34,11 @@ from .utils_parsing import (
     short_entity,
     split_and_repair_tokens,
 )
+from .prompts import (
+    build_classify_prompt,
+    build_facts_extraction_prompt,
+    build_json_repair_prompt,
+)
 
 _DEFAULT_TAXONOMY, _ = parse_taxonomy_lines(DEFAULT_TAXONOMY_LINES)
 
@@ -212,13 +217,7 @@ def _truncate_raw_output(text: str) -> str:
 
 def _repair_json_dict_via_llm(*, model: str, raw_output: str, base_url: str) -> Optional[str]:
     snippet = _truncate_raw_output(raw_output)
-    prompt = f"""
-You must output VALID JSON only (no code fences, no extra text).
-Fix the following output into a single JSON object. Keep the same keys and values as much as possible.
-
-Broken output:
-\"\"\"{snippet}\"\"\"
-"""
+    prompt = build_json_repair_prompt(snippet=snippet)
     try:
         gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=60.0)
     except Exception:
@@ -286,66 +285,18 @@ def _classify_from_text(
     taxonomy: Taxonomy,
     filename_separator: str,
 ) -> AnalysisResult:
-    year_hint_line = f"reference_year_hint: {reference_year_hint}" if reference_year_hint else "reference_year_hint: null"
-    category_hint_line = f"category_hint: {category_hint}" if category_hint else "category_hint: null"
     categories = taxonomy.allowed_names
     taxonomy_block = taxonomy_to_prompt_block(taxonomy)
-    if output_language == "it":
-        language_line = "Output language: Italian"
-    elif output_language == "en":
-        language_line = "Output language: English"
-    else:
-        language_line = "Output language: match the input document language (if unclear: English)"
-    prompt = f"""
-You are a document archiving assistant. Reply with VALID JSON only (no extra text).
-
-Goal:
-- understand what the document is about
-- choose a category from: {list(categories)}
-- taxonomy (meaning + examples):
-{taxonomy_block}
-- if category_hint is present, you may use it unless the content clearly indicates a different category
-- estimate the reference year (reference_year) the document refers to
-- estimate the production year (production_year) (if unknown: null)
-- extract structured facts for later normalization (language, doc_type, tags, people, organizations, date candidates)
-- write a richer summary_long (4-10 sentences)
-- propose a meaningful, descriptive file name (proposed_name) using words separated by spaces (not underscores)
-  - use 6-12 words when possible (not too short)
-  - include key entities (company/person), and month/period if present
-  - copy proper names as-is (do not guess spellings; if uncertain, omit the entity)
-  - do NOT include category/year unless there is no other useful info
-  - do NOT include generic words like "this document", "text", "image"
-  - keep it readable (avoid random IDs)
-- {language_line}
-- if unsure, set low confidence and provide skip_reason
-- if reference_year_hint is present, use it ONLY if the content doesn't clearly contradict it
-
-Input:
-filename: {filename}
-mtime_iso: {mtime_iso}
-{year_hint_line}
-{category_hint_line}
-content:
-\"\"\"{content}\"\"\"
-
-Output JSON schema:
-{{
-  "language": "it"|"en"|"unknown",
-  "doc_type": string,
-  "tags": string[],
-  "people": string[],
-  "organizations": string[],
-  "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number}}],
-  "summary_long": string,
-  "summary": string,
-  "category": string,
-  "reference_year": string|null,
-  "production_year": string|null,
-  "proposed_name": string,
-  "confidence": number,
-  "skip_reason": string|null
-}}
-"""
+    prompt = build_classify_prompt(
+        categories=list(categories),
+        taxonomy_block=taxonomy_block,
+        filename=filename,
+        mtime_iso=mtime_iso,
+        reference_year_hint=reference_year_hint,
+        category_hint=category_hint,
+        content=content,
+        output_language=output_language,
+    )
     try:
         gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
     except Exception as exc:  # noqa: BLE001 (MVP: best-effort)
@@ -536,55 +487,14 @@ def _extract_facts_from_text(
     year_hint_text: Optional[str],
     output_language: str,
 ) -> FactsResult:
-    if output_language == "it":
-        language_line = (
-            "Output language: Italian. All generated text fields MUST be Italian "
-            "(purpose, doc_type, tags, summary_long, skip_reason). "
-            "Keep proper names (people/orgs/addresses/identifiers) as-is."
-        )
-    elif output_language == "en":
-        language_line = (
-            "Output language: English. All generated text fields MUST be English "
-            "(purpose, doc_type, tags, summary_long, skip_reason). "
-            "Keep proper names (people/orgs/addresses/identifiers) as-is."
-        )
-    else:
-        language_line = "Output language: match the input document language (if unclear: English)"
-
-    prompt = f"""
-You are a document understanding assistant. Reply with VALID JSON only (no extra text).
-
-Goal:
-- Extract high-signal facts for later batch classification and coherent renaming.
-- Do NOT classify or propose a filename in this step.
-- Prefer precision over brevity: if a value is present, copy it exactly; do not guess.
-- {language_line}
-
-Inputs:
-filename: {filename}
-mtime_iso: {mtime_iso}
-year_hint_filename: {year_hint_filename or "null"}
-year_hint_text: {year_hint_text or "null"}
-content:
-\"\"\"{content}\"\"\"
-
-Output JSON schema:
-{{
-  "language": "it"|"en"|"unknown",
-  "doc_type": string|null,
-  "purpose": string,        // one sentence: why this document exists / what it is for
-  "tags": string[],
-  "people": string[],
-  "organizations": string[],
-  "addresses": string[],
-  "amounts": [{{"value": number, "currency": string, "raw": string}}],
-  "identifiers": [{{"type": string, "value": string}}],
-  "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
-  "summary_long": string,   // 6-12 sentences, include the most important extracted values (who/what/when/how much/ids)
-  "confidence": number,
-  "skip_reason": string|null
-}}
-"""
+    prompt = build_facts_extraction_prompt(
+        filename=filename,
+        mtime_iso=mtime_iso,
+        year_hint_filename=year_hint_filename,
+        year_hint_text=year_hint_text,
+        content=content,
+        output_language=output_language,
+    )
     try:
         gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
     except Exception as exc:  # noqa: BLE001

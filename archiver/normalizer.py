@@ -26,6 +26,7 @@ from .utils_parsing import (
     split_tokens,
     tokenize_for_match,
 )
+from .prompts import build_normalize_batch_prompt
 
 
 @dataclass(frozen=True)
@@ -225,21 +226,6 @@ def normalize_items(
     allowed = taxonomy.allowed_names
     taxonomy_block = taxonomy_to_prompt_block(taxonomy)
 
-    if output_language == "it":
-        language_line = (
-            "Output language: Italian. All generated text fields MUST be Italian "
-            "(category labels come from taxonomy; summary/proposed_name should be Italian). "
-            "Keep proper names as-is."
-        )
-    elif output_language == "en":
-        language_line = (
-            "Output language: English. All generated text fields MUST be English "
-            "(category labels come from taxonomy; summary/proposed_name should be English). "
-            "Keep proper names as-is."
-        )
-    else:
-        language_line = "Output language: match each document language; if unclear: English"
-
     sep_label = filename_separator
     sep_desc = {
         "space": "spaces",
@@ -343,44 +329,13 @@ def normalize_items(
                 }
             )
 
-        prompt = f"""
-You are a document archiving assistant. Reply with VALID JSON only.
-
-Task:
-- Given a batch of documents described by extracted facts (not the raw file content),
-  classify and rename with maximum output quality.
-- You MAY change category and reference_year if a better choice is supported by the facts.
-- Produce consistent, uniform naming across the batch by using coherent templates per document cluster.
-  Example: similar utility bills should share the same naming pattern (same ordering, same fields).
-
-Constraints:
-- category MUST be one of: {list(allowed)}
-- proposed_name MUST be descriptive, 6-14 words when possible.
-- Include key entities (organization/person) and a date/period if available in the facts or summary.
-- Copy proper names as-is; do NOT guess spellings. If uncertain, omit the entity.
-- Use {sep_desc} between words (no mixed separators). Do NOT put separators inside a word.
-- Do NOT include generic words like "document", "file", "text", "image".
-- Do NOT include category/year in the name unless there is no other useful info.
-- {language_line}
-
-Taxonomy:
-{taxonomy_block}
-
-Input (JSON list):
-{json.dumps(payload, ensure_ascii=False)}
-
-Output JSON schema (JSON list, same length as input, preserve 'path'):
-[
-  {{
-    "path": string,
-    "category": string,
-    "reference_year": string|null,
-    "proposed_name": string,
-    "summary": string,
-    "confidence": number|null
-  }}
-]
-"""
+        prompt = build_normalize_batch_prompt(
+            allowed_categories=list(allowed),
+            taxonomy_block=taxonomy_block,
+            separator_description=sep_desc,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            output_language=output_language,
+        )
 
         if should_cancel and should_cancel():
             return NormalizationResult(by_path=by_path, model_used=model, error="Cancelled")
