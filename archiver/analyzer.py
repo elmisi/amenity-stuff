@@ -6,9 +6,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
-from .ollama_client import generate, generate_with_image_file
+from .ollama_client import generate
 import time
 
+from .extractors.image import caption_image, extract_image_text_ocr
 from .extractors.registry import extract_with_meta
 from .pdf_extract import extract_pdf_text_with_meta
 from .scanner import ScanItem
@@ -68,13 +69,6 @@ class FactsResult:
     model_used: Optional[str] = None
 
 
-@dataclass(frozen=True)
-class ImageOcrMeta:
-    ocr_time_s: float
-    dpi: int
-    variants: int
-
-
 def _is_year(value: str) -> bool:
     return bool(re.fullmatch(r"(19\d{2}|20\d{2})", value))
 
@@ -129,103 +123,6 @@ def _extract_year_hint_from_path(path: Path) -> Optional[str]:
         return m.group(1)
 
     return None
-
-
-def _extract_image_text_ocr(
-    path: Path,
-    *,
-    max_chars: int,
-    ocr_mode: str,
-) -> tuple[Optional[str], Optional[ImageOcrMeta]]:
-    """Best-effort OCR for image files (jpg/png). Returns text + meta or (None, None)."""
-    import shutil
-
-    if not shutil.which("tesseract"):
-        return None, None
-    try:
-        from PIL import Image, ImageOps
-    except Exception:
-        return None, None
-    try:
-        import pytesseract
-    except Exception:
-        return None, None
-
-    def ocr_profile(mode: str) -> tuple[int, list[str], tuple[str, ...], bool, float]:
-        m = (mode or "").lower()
-        if m == "fast":
-            return 220, ["6"], ("ita+eng", "eng"), False, 12.0
-        if m == "high":
-            return 300, ["3", "4", "6", "11"], ("ita+eng", "eng+ita", "eng"), True, 60.0
-        return 260, ["6", "3"], ("ita+eng", "eng"), True, 25.0
-
-    def score_text(text: str) -> float:
-        t = (text or "").strip()
-        if not t:
-            return 0.0
-        sample = t[:2000]
-        alnum = sum(ch.isalnum() for ch in sample)
-        letters = sum(ch.isalpha() for ch in sample)
-        spaces = sum(ch.isspace() for ch in sample)
-        weird = sum(ord(ch) < 9 or ord(ch) == 127 for ch in sample)
-        artifacts = len(re.findall(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])_(?=[A-Za-zÀ-ÖØ-öø-ÿ])", sample))
-        return (alnum + letters * 0.5 + spaces * 0.1) - (weird * 5.0 + artifacts * 3.0)
-
-    def clean_ocr_artifacts(text: str) -> str:
-        return re.sub(r"(?<=[A-Za-zÀ-ÖØ-öø-ÿ])_(?=[A-Za-zÀ-ÖØ-öø-ÿ])", "", text or "")
-
-    try:
-        img = Image.open(path)
-    except Exception:
-        return None, None
-
-    dpi, psms, langs, heavy_preprocess, budget_s = ocr_profile(ocr_mode)
-    t0 = time.perf_counter()
-    tesseract_config = "--oem 1 --psm 6 -c preserve_interword_spaces=1"
-
-    variants: list[Image.Image] = []
-    try:
-        variants.append(img)
-        gray = img.convert("L")
-        variants.append(gray)
-        if heavy_preprocess:
-            variants.append(ImageOps.autocontrast(gray))
-            variants.append(ImageOps.autocontrast(gray).point(lambda x: 255 if x > 180 else 0, mode="1"))
-    except Exception:
-        variants = [img]
-
-    best_text = ""
-    best_score = 0.0
-    for v in variants:
-        for psm in psms:
-            if time.perf_counter() - t0 > budget_s:
-                break
-            cfg = tesseract_config.replace("--psm 6", f"--psm {psm}")
-            for lang in langs:
-                if time.perf_counter() - t0 > budget_s:
-                    break
-                try:
-                    text = pytesseract.image_to_string(v, lang=lang, config=cfg, timeout=30)
-                except Exception:
-                    continue
-                text = clean_ocr_artifacts(text)
-                s = score_text(text)
-                if s > best_score:
-                    best_score = s
-                    best_text = text
-            if time.perf_counter() - t0 > budget_s:
-                break
-        if time.perf_counter() - t0 > budget_s:
-            break
-
-    text = best_text.strip()
-    if not text:
-        return None, None
-    # Avoid using very low-signal OCR (photos, noise).
-    if best_score < 40.0 and len(text) < 120:
-        return None, None
-    ocr_elapsed = time.perf_counter() - t0
-    return text[:max_chars], ImageOcrMeta(ocr_time_s=ocr_elapsed, dpi=dpi, variants=len(variants))
 
 
 def _extract_year_hint_from_text(text: str) -> Optional[str]:
@@ -1142,8 +1039,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
 
     if item.kind == "image":
         max_chars = 14000
-        t0 = time.perf_counter()
-        ocr_text, ocr_meta = _extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=config.ocr_mode)
+        ocr_text, ocr_meta = extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=config.ocr_mode)
         if ocr_text and ocr_meta:
             year_hint_text = _extract_year_hint_from_text(ocr_text)
             excerpt = _content_excerpt_for_llm(ocr_text, max_chars=max_chars)
@@ -1175,32 +1071,15 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
             caption_prompt = "Describe this image in one sentence in Italian."
         else:
             caption_prompt = "Describe this image in one sentence in English."
-        caption = ""
-        vision_model_used: str | None = None
-        last_vision_error: str | None = None
-        cap_t0 = time.perf_counter()
-        for vm in _vision_model_candidates(config):
-            try:
-                cap = generate_with_image_file(
-                    model=vm,
-                    prompt=caption_prompt,
-                    image_path=str(path),
-                    base_url=config.ollama_base_url,
-                    timeout_s=180.0,
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_vision_error = f"{type(exc).__name__}"
-                continue
-            if cap.error:
-                last_vision_error = cap.error
-                continue
-            caption = cap.response.strip()
-            if caption:
-                vision_model_used = vm
-                break
-        cap_elapsed = time.perf_counter() - cap_t0
+        caption, cap_meta = caption_image(
+            path,
+            vision_models=tuple(_vision_model_candidates(config)),
+            prompt=caption_prompt,
+            base_url=config.ollama_base_url,
+            timeout_s=180.0,
+        )
         if not caption:
-            msg = "Empty caption" if not last_vision_error else f"Vision error: {last_vision_error}"
+            msg = "Empty caption" if not cap_meta.last_error else f"Vision error: {cap_meta.last_error}"
             return skipped(msg)
 
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
@@ -1217,14 +1096,14 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         )
         llm_elapsed = time.perf_counter() - t1
         used = model
-        if vision_model_used:
-            used = f"{model} (vision: {vision_model_used})"
+        if cap_meta.vision_model_used:
+            used = f"{model} (vision: {cap_meta.vision_model_used})"
         return replace(
             res,
             llm_time_s=llm_elapsed,
             model_used=used,
             extract_method="vision",
-            extract_time_s=cap_elapsed,
+            extract_time_s=cap_meta.caption_time_s,
             ocr_time_s=None,
             ocr_mode=None,
         )
@@ -1296,7 +1175,7 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
         effective_year_hint = filename_year_hint
         category_hint = _category_hint_from_signals(path=path, text=None)
         max_chars = 15000
-        ocr_text, ocr_meta = _extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=config.ocr_mode)
+        ocr_text, ocr_meta = extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=config.ocr_mode)
         if ocr_text and ocr_meta:
             content_year_hint = _extract_year_hint_from_text(ocr_text)
             effective_year_hint = effective_year_hint or content_year_hint
@@ -1324,32 +1203,16 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
                 caption_prompt = "Describe this image in one sentence in Italian."
             else:
                 caption_prompt = "Describe this image in one sentence in English."
-            caption = ""
-            vision_model_used: str | None = None
-            last_vision_error: str | None = None
-            cap_t0 = time.perf_counter()
-            for vm in _vision_model_candidates(config):
-                try:
-                    cap = generate_with_image_file(
-                        model=vm,
-                        prompt=caption_prompt,
-                        image_path=str(path),
-                        base_url=config.ollama_base_url,
-                        timeout_s=180.0,
-                    )
-                except Exception as exc:  # noqa: BLE001 (MVP: best-effort)
-                    last_vision_error = f"{type(exc).__name__}"
-                    continue
-                if cap.error:
-                    last_vision_error = cap.error
-                    continue
-                caption = cap.response.strip()
-                if caption:
-                    vision_model_used = vm
-                    break
-            cap_elapsed = time.perf_counter() - cap_t0
+            caption, cap_meta = caption_image(
+                path,
+                vision_models=tuple(_vision_model_candidates(config)),
+                prompt=caption_prompt,
+                base_url=config.ollama_base_url,
+                timeout_s=180.0,
+            )
+            cap_elapsed = cap_meta.caption_time_s
             if not caption:
-                msg = "Empty caption" if not last_vision_error else f"Vision error: {last_vision_error}"
+                msg = "Empty caption" if not cap_meta.last_error else f"Vision error: {cap_meta.last_error}"
                 return skipped_with_year(msg, effective_year_hint)
             t0 = time.perf_counter()
             res = _try_text_models(
@@ -1362,8 +1225,8 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
             )
             llm_elapsed = time.perf_counter() - t0
             res = replace(res, llm_time_s=llm_elapsed, extract_method="vision", extract_time_s=cap_elapsed)
-            if vision_model_used and res.model_used:
-                res = replace(res, model_used=f"{res.model_used} (vision: {vision_model_used})")
+            if cap_meta.vision_model_used and res.model_used:
+                res = replace(res, model_used=f"{res.model_used} (vision: {cap_meta.vision_model_used})")
 
         if res.status == "skipped":
             return replace(
