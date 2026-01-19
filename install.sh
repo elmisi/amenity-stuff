@@ -3,10 +3,16 @@
 # amenity-stuff installer
 # Usage: curl -sSL https://raw.githubusercontent.com/elmisi/amenity-stuff/main/install.sh | sh
 #
+# Installs to:
+#   ~/.local/share/amenity-stuff/venv/  (isolated Python environment)
+#   ~/.local/bin/amenity-stuff          (launcher script)
+#
 set -e
 
 REPO_URL="git+https://github.com/elmisi/amenity-stuff.git"
 APP_NAME="amenity-stuff"
+INSTALL_DIR="$HOME/.local/share/amenity-stuff"
+BIN_DIR="$HOME/.local/bin"
 MIN_PYTHON_VERSION="3.10"
 
 # Colors (disabled if not a terminal)
@@ -60,7 +66,7 @@ python_version() {
 
 # Find a suitable Python >= 3.10
 find_python() {
-    for cmd in python3 python python3.12 python3.11 python3.10; do
+    for cmd in python3 python python3.13 python3.12 python3.11 python3.10; do
         if has_cmd "$cmd"; then
             ver=$(python_version "$cmd")
             if [ -n "$ver" ] && version_gte "$ver" "$MIN_PYTHON_VERSION"; then
@@ -120,62 +126,73 @@ fi
 PYTHON_VER=$(python_version "$PYTHON_CMD")
 success "Found $PYTHON_CMD ($PYTHON_VER)"
 
-# --- pipx check ---
-header "Checking package installer"
+# --- Check for existing installation ---
+if [ -d "$INSTALL_DIR" ]; then
+    warn "Existing installation found at $INSTALL_DIR"
+    printf "Reinstall? [y/N] "
+    read -r answer
+    case "$answer" in
+        [Yy]*)
+            info "Removing existing installation..."
+            rm -rf "$INSTALL_DIR"
+            ;;
+        *)
+            info "Installation cancelled"
+            exit 0
+            ;;
+    esac
+fi
 
-# Check for PEP 668 externally-managed environment (modern Debian/Ubuntu)
-is_externally_managed() {
-    local py_version
-    py_version=$("$PYTHON_CMD" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    [ -f "/usr/lib/python${py_version}/EXTERNALLY-MANAGED" ] || [ -f "/usr/lib/python3/EXTERNALLY-MANAGED" ]
-}
+# --- Create venv ---
+header "Creating isolated environment"
 
-if has_cmd pipx; then
-    success "Found pipx"
+mkdir -p "$INSTALL_DIR"
+info "Creating venv at $INSTALL_DIR/venv..."
+
+if "$PYTHON_CMD" -m venv "$INSTALL_DIR/venv"; then
+    success "Created venv"
 else
-    error "pipx not found"
-    printf "\n"
-    info "pipx is required to install $APP_NAME."
-    printf "\n"
-
-    if [ "$OS" = "linux" ]; then
-        info "Install pipx:"
-        printf "  ${BOLD}sudo apt install pipx${NC}\n"
-        printf "  ${BOLD}pipx ensurepath${NC}\n"
-        printf "\n"
-        info "Then restart your shell and re-run this installer."
-    else
-        info "Install pipx:"
-        printf "  ${BOLD}brew install pipx${NC}\n"
-        printf "  ${BOLD}pipx ensurepath${NC}\n"
-        printf "\n"
-        info "Then restart your shell and re-run this installer."
-    fi
+    error "Failed to create venv"
+    rm -rf "$INSTALL_DIR"
     exit 1
 fi
 
-# --- Install ---
+# --- Install package ---
 header "Installing $APP_NAME"
 
-info "Installing via pipx..."
-if pipx install "$REPO_URL"; then
-    success "Installed via pipx"
+info "Installing from GitHub..."
+if "$INSTALL_DIR/venv/bin/pip" install --quiet "$REPO_URL"; then
+    success "Installed $APP_NAME"
 else
-    error "pipx install failed"
+    error "pip install failed"
+    rm -rf "$INSTALL_DIR"
     exit 1
 fi
+
+# --- Create launcher script ---
+header "Creating launcher"
+
+mkdir -p "$BIN_DIR"
+
+cat > "$BIN_DIR/$APP_NAME" << 'LAUNCHER'
+#!/usr/bin/env bash
+exec "$HOME/.local/share/amenity-stuff/venv/bin/amenity-stuff" "$@"
+LAUNCHER
+
+chmod +x "$BIN_DIR/$APP_NAME"
+success "Created $BIN_DIR/$APP_NAME"
 
 # --- Verify installation ---
 header "Verifying installation"
 
-# Give PATH a chance to update (pipx may have added to PATH)
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="$BIN_DIR:$PATH"
 
 if has_cmd "$APP_NAME"; then
-    success "$APP_NAME is available in PATH"
+    success "$APP_NAME is available"
 else
     warn "$APP_NAME not found in PATH"
-    info "You may need to restart your shell or add ~/.local/bin to PATH"
+    info "Add ~/.local/bin to your PATH:"
+    printf "  export PATH=\"\$HOME/.local/bin:\$PATH\"\n"
 fi
 
 # --- Ollama check ---
@@ -263,6 +280,10 @@ fi
 # --- Summary ---
 header "Installation complete"
 
+printf "Installed to:\n"
+printf "  ${BOLD}$INSTALL_DIR/venv/${NC}  (Python environment)\n"
+printf "  ${BOLD}$BIN_DIR/$APP_NAME${NC}  (launcher)\n"
+printf "\n"
 printf "Run the application:\n"
 printf "  ${BOLD}$APP_NAME${NC}\n"
 printf "\n"

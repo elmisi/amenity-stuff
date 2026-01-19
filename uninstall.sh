@@ -6,6 +6,8 @@
 set -e
 
 APP_NAME="amenity-stuff"
+INSTALL_DIR="$HOME/.local/share/amenity-stuff"
+BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/amenity-stuff"
 
 # Colors (disabled if not a terminal)
@@ -31,28 +33,30 @@ warn()    { printf "${YELLOW}⚠${NC} %s\n" "$1"; }
 error()   { printf "${RED}✗${NC} %s\n" "$1"; }
 header()  { printf "\n${BOLD}%s${NC}\n" "$1"; }
 
-has_cmd() {
-    command -v "$1" >/dev/null 2>&1
-}
-
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
 header "Uninstalling $APP_NAME"
 
-# Try pipx first, then pip
-if has_cmd pipx && pipx list 2>/dev/null | grep -q "$APP_NAME"; then
-    info "Removing via pipx..."
-    pipx uninstall "$APP_NAME" && success "Removed $APP_NAME via pipx" || warn "pipx uninstall failed"
-elif has_cmd pip3 && pip3 show "$APP_NAME" >/dev/null 2>&1; then
-    info "Removing via pip3..."
-    pip3 uninstall -y "$APP_NAME" && success "Removed $APP_NAME via pip3" || warn "pip3 uninstall failed"
-elif has_cmd pip && pip show "$APP_NAME" >/dev/null 2>&1; then
-    info "Removing via pip..."
-    pip uninstall -y "$APP_NAME" && success "Removed $APP_NAME via pip" || warn "pip uninstall failed"
-else
-    warn "$APP_NAME not found (pipx/pip)"
+FOUND_SOMETHING=false
+
+# Remove launcher script
+if [ -f "$BIN_DIR/$APP_NAME" ]; then
+    rm -f "$BIN_DIR/$APP_NAME"
+    success "Removed $BIN_DIR/$APP_NAME"
+    FOUND_SOMETHING=true
+fi
+
+# Remove venv directory
+if [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    success "Removed $INSTALL_DIR"
+    FOUND_SOMETHING=true
+fi
+
+if [ "$FOUND_SOMETHING" = false ]; then
+    warn "$APP_NAME installation not found"
 fi
 
 # Config directory
