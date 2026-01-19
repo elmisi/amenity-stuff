@@ -2,9 +2,9 @@
 
 Terminal UI to organize files using a local LLM (via Ollama) with a 2-phase workflow:
 1) extract high-signal facts (no classification yet),
-2) batch classify + propose coherent file names (taxonomy-driven).
+2) classify + propose coherent file names (taxonomy-driven).
 
-Upcoming milestones include per-file approval and applying rename/move operations into an archive structured as `{category}/{year}`.
+You can then move files into an archive structured as `{category}/{year}` (or `{category}/{undated}`).
 
 See `PROJECT_SPEC.md` for a more detailed (and up-to-date) project specification.
 
@@ -13,13 +13,18 @@ See `PROJECT_SPEC.md` for a more detailed (and up-to-date) project specification
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install .
-amenity-stuff run
+amenity-stuff
 ```
 
 System-wide (recommended):
 ```bash
 pipx install git+https://github.com/elmisi/amenity-stuff.git
-amenity-stuff run
+amenity-stuff
+```
+
+You can also pass source/archive on the CLI (defaults: `--source .` and `--archive ./ARCHIVE`):
+```bash
+amenity-stuff --source /path/to/folder --archive /path/to/archive
 ```
 
 ## Performance report
@@ -52,11 +57,11 @@ banca | Banca e pagamenti “generici”: estratti conto e movimenti non ricondu
 legale | Documenti legali e compliance | contratto; termini; privacy; diffida; procura; atto; denuncia; ricorso; NDA; lettera legale
 lavoro | Documenti di lavoro e professionali | busta paga; cedolino; payroll; timesheet; contratto lavoro; offerta; HR; CU/CUD; lettera assunzione; dimissioni
 personale | Documenti personali, identità, lettere, appunti scritti a mano | carta d'identità; passaporto; patente; certificato; lettera personale; appunti; nota; testo canzone; poesia; scritto a mano
-salute | Documenti sanitari e medici | referto; ricetta; analisi; visita; certificato medico; vaccino; fattura medica; terapia
+salute | Documenti sanitari e medici | referto; ricetta; analisi; visita; certificato medico; vaccino; fattura medica; terapia; dieta; alimentazione
 studio | Scuola, università e formazione | attestato; certificato; diploma; transcript; materiale corso; iscrizione; esame; tesi
 media | Contenuti e media: libri, foto, screenshot, audio/video | ebook; libro; articolo; foto; screenshot; scansione foto; audio; video
 tecnica | Documenti tecnici: manuali, specifiche, documentazione | manuale; specifica; datasheet; documentazione API; architettura; configurazione; log; guida
-sconosciuto | Non classificato / saltato |
+sconosciuto | Non classificato / saltato
 ```
 
 ## Security & Privacy
@@ -66,7 +71,7 @@ sconosciuto | Non classificato / saltato |
 
 ## Limitations (updated over time)
 - Parsing and OCR are best-effort: some files may be `skipped` or produce incomplete output.
-- The “approve and move” phase is not implemented yet (proposal/preview only).
+- There is no “apply plan with per-file approval” workflow yet: moving is manual (`m` / `M`).
 
 ## Optional System Dependencies
 
@@ -99,7 +104,9 @@ Models: the app uses a text model and (for images) a vision model; exact model n
 
 ## Scan (MVP)
 
-The table lists common formats found in the selected source folder:
+The table lists all files found in the selected source folder. Unsupported formats are shown as `skipped` with reason `unsupported file type`.
+
+Supported formats include:
 - `pdf`
 - images: `jpg/jpeg/png`
 - office: `doc/docx/odt/xls/xlsx` (see optional dependencies above)
@@ -113,7 +120,7 @@ The table lists common formats found in the selected source folder:
 - `C` classify scanned (`scanned` only, per-file)
 - `m` move selected eligible file to archive (`classified`, `skipped`, `error`)
 - `M` move all eligible files to archive
-- `x` stop current task (scan or classify)
+- `x` stop current task (scan, classify, move)
 - `enter` open selected file (default app)
 - `u` unclassify selected row (keep scan results)
 - `r` reset selected row (back to `pending`, invalidate cache)
@@ -128,9 +135,10 @@ Mouse text selection is supported (so you can select/copy fields like absolute p
 ### Status
 The `Status` column is icon-only (with color):
 - `·` pending
-- `✓` scanning / classifying (running)
+- `✓` scanning / classifying / moving (running)
 - `✓` scanned (facts available, not yet classified)
 - `✓` classified (category/year/name proposed)
+- `✓` moved (archived)
 - `✗` skipped / error
 
 ### Cache (MVP)

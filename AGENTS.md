@@ -1,6 +1,6 @@
 # Agent Guidelines (amenity-stuff)
 
-This repo is a Textual (Python) TUI that scans a source folder, extracts content (PDF / images), calls a local LLM (Ollama) for structured classification, and (later) will apply rename/move operations into an archive.
+This repo is a Textual (Python) TUI that scans a source folder, extracts content (PDF / images / office / text-ish), calls a local LLM (Ollama) for structured analysis + classification, and can move files into an archive.
 
 These guidelines document the conventions used so far and should be followed for future development.
 
@@ -58,7 +58,8 @@ When refactoring, do not change functionality unless explicitly requested:
 
 ## Versioning (Repo / App)
 - The current version is stored in `VERSION` and mirrored in `pyproject.toml`.
-- Bump the **patch** version for every commit on `main` to keep builds/reproducibility simple.
+- Bump the **patch** version for every code change commit on `main` to keep builds/reproducibility simple.
+- Do NOT bump the version for documentation-only commits.
 - Helper: run `python3 scripts/bump_version.py` before committing (updates both files).
 
 ## Local Installation (pipx)

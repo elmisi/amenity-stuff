@@ -7,8 +7,10 @@ The long-term goal is to help users turn a “messy folder” into a clean archi
 ## Scope (current MVP)
 
 ### Supported file types
-- PDF (`.pdf`)
-- Images (`.jpg`, `.jpeg`, `.png`)
+- Documents: `.pdf`, `.doc/.docx/.odt`, `.xls/.xlsx`
+- Images: `.jpg/.jpeg/.png`
+- Text-ish: `.txt/.md/.json/.rtf/.svg/.kmz`
+- Unsupported formats are still listed in the table and will be marked `skipped` with reason `unsupported file type`.
 
 ### 2-phase workflow
 1. **Scan (facts extraction)**  
@@ -18,15 +20,15 @@ The long-term goal is to help users turn a “messy folder” into a clean archi
    - Local LLM call (Ollama) to produce structured “facts” and a rich summary
    - No category/year/rename decision is required at this stage
 
-2. **Classify (batch)**  
+2. **Classify**  
    Using only scanned results, propose:
    - taxonomy-driven **category**
    - best-effort **reference year**
    - a coherent **proposed filename** (without redundantly repeating category/year when not necessary)
 
 ## Non-goals (for now)
-- No files are moved or renamed yet.
 - No remote providers are supported (local Ollama only).
+- No automatic “approve plan and apply” flow yet (moving is manual).
 
 ## UX Requirements (TUI)
 
@@ -38,7 +40,7 @@ The long-term goal is to help users turn a “messy folder” into a clean archi
 ### Operations and cancellation
 - Long-running work runs in background workers; the UI stays interactive.
 - A single scan/classify operation runs at a time.
-- `x` stops the current task (scan or classify) as soon as possible (cooperative cancellation).
+- `x` stops the current task (scan, classify, move) as soon as possible (cooperative cancellation).
 
 ### Reset vs unclassify
 - **Reset** (`r`) returns a file to `pending` and clears cached results (scan + classification).
@@ -74,7 +76,7 @@ Transient statuses are never reused from cache (e.g. `scanning`, `classifying`).
 1. **Approval + apply phase**
    - per-file approval
    - dry-run first
-   - move/rename into `{category}/{year}` under the archive root
+   - move/rename into `{category}/{year}` under the archive root (and support for undated)
    - collision handling and filename sanitization
 2. **Better extraction**
    - improved PDF text extraction and OCR heuristics
@@ -82,4 +84,3 @@ Transient statuses are never reused from cache (e.g. `scanning`, `classifying`).
 3. **Quality improvements**
    - stronger naming consistency across similar documents
    - better year inference (content + filename + metadata)
-
