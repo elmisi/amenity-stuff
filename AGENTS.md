@@ -66,12 +66,9 @@ When refactoring, do not change functionality unless explicitly requested:
 - Helper: run `python3 scripts/bump_version.py` before committing (updates both files).
 
 ## Local Installation (development)
-- For development, use a local venv:
-  ```bash
-  python3 -m venv .venv
-  ./.venv/bin/pip install -e .
-  ```
-- To test the system-wide install, run `install.sh` locally or use:
+- After bumping the version, always refresh the local install:
   ```bash
   ~/.local/share/amenity-stuff/venv/bin/pip install -e .
   ```
+- This updates the system-wide `amenity-stuff` command to use your local changes.
+- For quick tests without installing, run directly: `python3 -m archiver`

@@ -19,12 +19,11 @@ curl -sSL https://raw.githubusercontent.com/elmisi/amenity-stuff/main/install.sh
 # Uninstall
 curl -sSL https://raw.githubusercontent.com/elmisi/amenity-stuff/main/uninstall.sh | sh
 
-# Development install (from repo)
-python3 -m venv .venv
-./.venv/bin/pip install .
+# Development: refresh local install after version bump
+~/.local/share/amenity-stuff/venv/bin/pip install -e .
 
-# Refresh system-wide install after local changes
-pipx install -e . --force
+# Quick test without installing
+python3 -m archiver
 
 # Run the TUI
 amenity-stuff --source /path/to/folder --archive /path/to/archive
