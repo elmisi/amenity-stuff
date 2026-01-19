@@ -34,6 +34,7 @@ from .help_screen import HelpScreen
 from .ui_runtime import banner_for_state, count_statuses, derive_task_state, provider_problem
 from .item_mutations import mark_item_classifying, mark_item_scanning, reset_item_to_pending, unclassify_item
 from .open_file import open_with_default_app
+from .ui_files_table import build_file_table_rows
 
 
 class ArchiverApp(App):
@@ -1025,17 +1026,10 @@ class ArchiverApp(App):
         files.clear()
         self._scan_index_by_path.clear()
 
-        for idx, item in enumerate(self._scan_items):
-            rel = str(item.path)
-            try:
-                rel = str(item.path.relative_to(self.settings.source_root.expanduser().resolve()))
-            except Exception:
-                pass
-            cat = item.category or ""
-            year = item.reference_year or ""
-            key = str(item.path)
-            self._scan_index_by_path[key] = idx
-            files.add_row(status_cell(item.status), item.kind, rel, cat, year, key=key)
+        rows, index_by_key = build_file_table_rows(self._scan_items, source_root=self.settings.source_root)
+        self._scan_index_by_path.update(index_by_key)
+        for row in rows:
+            files.add_row(row.status, row.kind, row.file, row.category, row.year, key=row.key)
 
         if files.row_count:
             if prev_row < 0 or prev_row >= files.row_count:
