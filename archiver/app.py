@@ -318,7 +318,7 @@ class ArchiverApp(App):
         self.push_screen(
             SettingsScreen(
                 output_language=self.settings.output_language,
-                taxonomy_lines=self.settings.taxonomy_lines,
+                taxonomies=self.settings.taxonomies,
                 facts_model=self.settings.facts_model,
                 classify_model=self.settings.classify_model,
                 vision_model=self.settings.vision_model,
@@ -340,7 +340,7 @@ class ArchiverApp(App):
         self.settings = replace(
             self.settings,
             output_language=result.output_language,
-            taxonomy_lines=result.taxonomy_lines,
+            taxonomies=result.taxonomies,
             facts_model=result.facts_model,
             classify_model=result.classify_model,
             vision_model=result.vision_model,
@@ -476,7 +476,7 @@ class ArchiverApp(App):
             self._render_notes()
 
         def do_extract_background() -> None:
-            taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+            taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             worker = get_current_worker()
             for it in list(self._scan_items):
@@ -523,7 +523,7 @@ class ArchiverApp(App):
             return
         if not self._discovery:
             return
-        taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+        taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
         text_models, _ = pick_model_candidates(self._discovery)
         if self.settings.classify_model and self.settings.classify_model != "auto":
             text_models = (
@@ -804,7 +804,7 @@ class ArchiverApp(App):
 
         def do_one() -> None:
             worker = get_current_worker()
-            taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+            taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             t0 = time.perf_counter()
             if worker.is_cancelled:
@@ -873,7 +873,7 @@ class ArchiverApp(App):
             self.query_one("#notes", Static).update("Select a scanned file first (press S/s).")
             return
 
-        taxonomy, _ = parse_taxonomy_lines(self.settings.taxonomy_lines)
+        taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
         text_models, _ = pick_model_candidates(self._discovery)
         if self.settings.classify_model and self.settings.classify_model != "auto":
             text_models = (

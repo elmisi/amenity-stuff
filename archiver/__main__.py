@@ -8,7 +8,6 @@ from .app import ArchiverApp
 from .config import load_config
 from .perf_report import print_performance_report
 from .settings import Settings
-from .taxonomy import DEFAULT_TAXONOMY_LINES
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,12 +73,11 @@ def main() -> None:
     if default_archive == Path("./ARCHIVE") and cfg.last_archive_root:
         default_archive = Path(cfg.last_archive_root)
     skip_setup = bool(cfg.last_archive_root) and args.archive == Path("./ARCHIVE")
-    taxonomy_lines = cfg.taxonomy_lines or DEFAULT_TAXONOMY_LINES
     settings = Settings(
         source_root=default_source,
         archive_root=default_archive,
         output_language=cfg.output_language,
-        taxonomy_lines=taxonomy_lines,
+        taxonomies=cfg.taxonomies,
         facts_model=cfg.facts_model,
         classify_model=cfg.classify_model,
         vision_model=cfg.vision_model,

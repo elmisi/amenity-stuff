@@ -9,13 +9,17 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, OptionList, Static, TextArea
 
 from .archive_picker_screen import ArchivePickerResult, ArchivePickerScreen
-from .taxonomy import DEFAULT_TAXONOMY_LINES, parse_taxonomy_lines
+from .taxonomy import (
+    get_default_taxonomy_for_language,
+    get_effective_language,
+    parse_taxonomy_lines,
+)
 
 
 @dataclass(frozen=True)
 class SettingsResult:
     output_language: str
-    taxonomy_lines: tuple[str, ...]
+    taxonomies: dict[str, tuple[str, ...]]
     facts_model: str
     classify_model: str
     vision_model: str
@@ -49,7 +53,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         self,
         *,
         output_language: str,
-        taxonomy_lines: tuple[str, ...],
+        taxonomies: dict[str, tuple[str, ...]],
         facts_model: str,
         classify_model: str,
         vision_model: str,
@@ -63,7 +67,7 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         super().__init__()
         self._provider_info = provider_info.strip()
         self._output_language = output_language if output_language in {"auto", "it", "en"} else "auto"
-        self._taxonomy_lines = taxonomy_lines or DEFAULT_TAXONOMY_LINES
+        self._taxonomies: dict[str, tuple[str, ...]] = dict(taxonomies) if taxonomies else {}
         self._facts_model = facts_model or "auto"
         self._classify_model = classify_model or "auto"
         self._vision_model = vision_model or "auto"
@@ -79,6 +83,27 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         self._sep_options = ("space", "underscore", "dash")
         self._ocr_options = ("fast", "balanced", "high")
 
+    def _get_effective_lang(self) -> str:
+        """Get the effective language for taxonomy display."""
+        return get_effective_language(self._output_language)
+
+    def _get_current_taxonomy_lines(self) -> tuple[str, ...]:
+        """Get taxonomy lines for the current effective language."""
+        lang = self._get_effective_lang()
+        if lang in self._taxonomies and self._taxonomies[lang]:
+            return self._taxonomies[lang]
+        return get_default_taxonomy_for_language(lang)
+
+    def _save_textarea_to_current_lang(self) -> None:
+        """Save the current textarea content to the current language's taxonomy."""
+        try:
+            text = self.query_one("#taxonomy", TextArea).text
+            lines = tuple(ln.rstrip("\n") for ln in text.splitlines() if ln.strip())
+            lang = self._get_effective_lang()
+            self._taxonomies[lang] = lines
+        except Exception:
+            pass
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Static(
@@ -87,8 +112,9 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         )
         yield Static(self._provider_info or "Provider: (unknown)", id="provider", markup=False)
         yield OptionList(*self._render_options(), id="options")
-        yield Static("Taxonomy (one category per line): name | description | examples", id="taxonomy_label")
-        yield TextArea("\n".join(self._taxonomy_lines).strip() + "\n", id="taxonomy", tab_behavior="indent")
+        lang = self._get_effective_lang()
+        yield Static(f"Taxonomy [{lang.upper()}] (one category per line): name | description | examples", id="taxonomy_label")
+        yield TextArea("\n".join(self._get_current_taxonomy_lines()).strip() + "\n", id="taxonomy", tab_behavior="indent")
         yield Static("", id="errors")
         yield Footer()
 
@@ -102,14 +128,16 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         self.query_one("#taxonomy", TextArea).focus()
 
     def action_reset_taxonomy(self) -> None:
-        self.query_one("#taxonomy", TextArea).text = "\n".join(DEFAULT_TAXONOMY_LINES).strip() + "\n"
+        lang = self._get_effective_lang()
+        default_lines = get_default_taxonomy_for_language(lang)
+        self.query_one("#taxonomy", TextArea).text = "\n".join(default_lines).strip() + "\n"
         self.query_one("#errors", Static).update("")
 
     def action_cancel(self) -> None:
         self.dismiss(
             SettingsResult(
                 output_language=self._output_language,
-                taxonomy_lines=self._taxonomy_lines,
+                taxonomies=self._taxonomies,
                 facts_model=self._facts_model,
                 classify_model=self._classify_model,
                 vision_model=self._vision_model,
@@ -167,7 +195,10 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         elif idx == 2:
             self._vision_model = self._cycle_value(self._vision_model, self._vision_options, forward=forward)
         elif idx == 3:
+            # Language change: save current taxonomy, switch, load new
+            self._save_textarea_to_current_lang()
             self._output_language = self._cycle_value(self._output_language, self._lang_options, forward=forward)
+            self._update_taxonomy_display()
         elif idx == 5:
             self._filename_separator = self._cycle_value(self._filename_separator, self._sep_options, forward=forward)
         elif idx == 6:
@@ -175,6 +206,16 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         else:
             return
         self._refresh_options()
+
+    def _update_taxonomy_display(self) -> None:
+        """Update the taxonomy textarea and label for the current language."""
+        lang = self._get_effective_lang()
+        lines = self._get_current_taxonomy_lines()
+        self.query_one("#taxonomy", TextArea).text = "\n".join(lines).strip() + "\n"
+        self.query_one("#taxonomy_label", Static).update(
+            f"Taxonomy [{lang.upper()}] (one category per line): name | description | examples"
+        )
+        self.query_one("#errors", Static).update("")
 
     def _cycle_undated_name(self) -> None:
         # Keep this simple for now: toggle between a few common choices.
@@ -219,10 +260,13 @@ class SettingsScreen(ModalScreen[SettingsResult]):
         if errors:
             self.query_one("#errors", Static).update("\n".join(errors[:6]))
             return
+        # Save current textarea content to current language
+        lang = self._get_effective_lang()
+        self._taxonomies[lang] = lines
         self.dismiss(
             SettingsResult(
                 output_language=self._output_language,
-                taxonomy_lines=lines,
+                taxonomies=self._taxonomies,
                 facts_model=self._facts_model,
                 classify_model=self._classify_model,
                 vision_model=self._vision_model,

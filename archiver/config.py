@@ -12,13 +12,18 @@ class AppConfig:
     last_archive_root: Optional[str] = None
     last_source_root: Optional[str] = None
     output_language: str = "auto"  # auto | it | en
-    taxonomy_lines: tuple[str, ...] = ()
+    taxonomies: dict[str, tuple[str, ...]] = None  # type: ignore[assignment]  # {lang: lines}
     facts_model: str = "auto"
     classify_model: str = "auto"
     vision_model: str = "auto"
     filename_separator: str = "space"  # space | underscore | dash
     ocr_mode: str = "balanced"  # fast | balanced | high
     undated_folder_name: str = "undated"
+
+    def __post_init__(self) -> None:
+        # Ensure taxonomies is always a dict
+        if self.taxonomies is None:
+            object.__setattr__(self, "taxonomies", {})
 
 
 def _config_path() -> Path:
@@ -27,7 +32,18 @@ def _config_path() -> Path:
     return base / "amenity-stuff" / "config.json"
 
 
+def _parse_taxonomy_list(lst: list) -> tuple[str, ...]:
+    """Parse a list of taxonomy lines from JSON."""
+    lines: list[str] = []
+    for v in lst:
+        if isinstance(v, str) and v.strip():
+            lines.append(v.rstrip("\n"))
+    return tuple(lines)
+
+
 def load_config() -> AppConfig:
+    from .taxonomy import get_effective_language
+
     path = _config_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -38,7 +54,8 @@ def load_config() -> AppConfig:
     last_archive = data.get("last_archive_root")
     last_source = data.get("last_source_root")
     output_language = data.get("output_language")
-    taxonomy_lines = data.get("taxonomy_lines")
+    taxonomies_raw = data.get("taxonomies")
+    taxonomy_lines_legacy = data.get("taxonomy_lines")  # Old format
     facts_model = data.get("facts_model")
     classify_model = data.get("classify_model")
     legacy_text_model = data.get("text_model")
@@ -52,16 +69,29 @@ def load_config() -> AppConfig:
         kwargs["last_archive_root"] = last_archive.strip()
     if isinstance(last_source, str) and last_source.strip():
         kwargs["last_source_root"] = last_source.strip()
+
+    # Parse output_language first (needed for taxonomy migration)
+    effective_lang = "en"
     if isinstance(output_language, str) and output_language.strip():
         lang = output_language.strip().lower()
         if lang in {"auto", "it", "en"}:
             kwargs["output_language"] = lang
-    if isinstance(taxonomy_lines, list):
-        lines: list[str] = []
-        for v in taxonomy_lines:
-            if isinstance(v, str) and v.strip():
-                lines.append(v.rstrip("\n"))
-        kwargs["taxonomy_lines"] = tuple(lines)
+            effective_lang = get_effective_language(lang)
+
+    # Parse taxonomies (new format) or migrate from taxonomy_lines (old format)
+    taxonomies: dict[str, tuple[str, ...]] = {}
+    if isinstance(taxonomies_raw, dict):
+        for lang_key, lines_list in taxonomies_raw.items():
+            if isinstance(lang_key, str) and lang_key in {"it", "en"} and isinstance(lines_list, list):
+                taxonomies[lang_key] = _parse_taxonomy_list(lines_list)
+    elif isinstance(taxonomy_lines_legacy, list):
+        # Migrate old format: assign to effective language
+        lines = _parse_taxonomy_list(taxonomy_lines_legacy)
+        if lines:
+            taxonomies[effective_lang] = lines
+    if taxonomies:
+        kwargs["taxonomies"] = taxonomies
+
     # Backward compat: older configs used a single "text_model" for both phases.
     if isinstance(legacy_text_model, str) and legacy_text_model.strip():
         legacy = legacy_text_model.strip()
@@ -91,6 +121,10 @@ def load_config() -> AppConfig:
 def save_config(config: AppConfig) -> None:
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Convert taxonomies tuples to lists for JSON serialization
+    data = dict(config.__dict__)
+    if "taxonomies" in data and isinstance(data["taxonomies"], dict):
+        data["taxonomies"] = {k: list(v) for k, v in data["taxonomies"].items()}
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(config.__dict__, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(path)

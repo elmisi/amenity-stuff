@@ -21,7 +21,7 @@ class Taxonomy:
         return tuple(c.name for c in self.categories)
 
 
-DEFAULT_TAXONOMY_LINES: tuple[str, ...] = (
+DEFAULT_TAXONOMY_EN: tuple[str, ...] = (
     "house | Home, property, rent, utilities, household paperwork | rent; lease; condominium; property tax; utility bill; electricity; gas; water; internet; home insurance; maintenance",
     "purchases | Purchases and subscriptions | receipt; order confirmation; subscription; e-commerce; warranty; invoice for goods/services",
     "travel | Travel and transportation | flight; hotel; booking; ticket; itinerary; car rental; travel insurance",
@@ -36,6 +36,52 @@ DEFAULT_TAXONOMY_LINES: tuple[str, ...] = (
     "tech | Technical docs | manual; datasheet; spec; API documentation; architecture; configuration; logs",
     "unknown | Unclassified / skipped |",
 )
+
+DEFAULT_TAXONOMY_IT: tuple[str, ...] = (
+    "casa | Abitazione e immobili: affitto, condominio, utenze, manutenzione, tasse casa | affitto; contratto locazione; condominio; amministratore; manutenzione; assicurazione casa; IMU; TARI; bolletta; luce; gas; acqua; internet",
+    "acquisti | Acquisti e abbonamenti: ordini, ricevute, garanzie, servizi | ricevuta; scontrino; ordine; conferma ordine; abbonamento; rinnovo; garanzia; fattura acquisto; e-commerce",
+    "viaggi | Viaggi e trasporti: prenotazioni, biglietti, itinerari | volo; biglietto; hotel; prenotazione; itinerario; noleggio auto; assicurazione viaggio; treno; trasporto",
+    "tasse | Tasse e pubblica amministrazione: pagamenti e comunicazioni ufficiali | F24; dichiarazione redditi; Agenzia Entrate; tributo; avviso pagamento; PagoPA; Comune; cartella; imposta",
+    "banca | Banca e pagamenti generici: estratti conto e movimenti | estratto conto; bonifico; carta; transazione; addebito; accredito; ricevuta pagamento; conto corrente",
+    "legale | Documenti legali e compliance | contratto; termini; privacy; diffida; procura; atto; denuncia; ricorso; NDA; lettera legale",
+    "lavoro | Documenti di lavoro e professionali | busta paga; cedolino; payroll; timesheet; contratto lavoro; offerta; HR; CU; CUD; lettera assunzione; dimissioni",
+    "personale | Documenti personali, identità, lettere, appunti | carta identità; passaporto; patente; certificato; lettera personale; appunti; nota; testo canzone; poesia; scritto a mano",
+    "salute | Documenti sanitari e medici | referto; ricetta; analisi; visita; certificato medico; vaccino; fattura medica; terapia; dieta",
+    "studio | Scuola, università e formazione | attestato; certificato; diploma; transcript; materiale corso; iscrizione; esame; tesi",
+    "media | Contenuti e media: libri, foto, screenshot, audio/video | ebook; libro; articolo; foto; screenshot; scansione foto; audio; video",
+    "tecnica | Documenti tecnici: manuali, specifiche, documentazione | manuale; specifica; datasheet; documentazione API; architettura; configurazione; log; guida",
+    "sconosciuto | Non classificato / saltato |",
+)
+
+DEFAULT_TAXONOMIES: dict[str, tuple[str, ...]] = {
+    "en": DEFAULT_TAXONOMY_EN,
+    "it": DEFAULT_TAXONOMY_IT,
+}
+
+# Backward compatibility alias
+DEFAULT_TAXONOMY_LINES: tuple[str, ...] = DEFAULT_TAXONOMY_EN
+
+
+def get_default_taxonomy_for_language(lang: str) -> tuple[str, ...]:
+    """Return the default taxonomy for a given language code."""
+    if lang in DEFAULT_TAXONOMIES:
+        return DEFAULT_TAXONOMIES[lang]
+    return DEFAULT_TAXONOMY_EN
+
+
+def get_effective_language(output_language: str) -> str:
+    """Resolve 'auto' to a concrete language code based on system locale."""
+    if output_language in {"it", "en"}:
+        return output_language
+    # Detect from environment
+    import locale
+    try:
+        loc = locale.getlocale()[0] or ""
+        if loc.lower().startswith("it"):
+            return "it"
+    except Exception:
+        pass
+    return "en"
 
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
