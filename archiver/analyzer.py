@@ -2,20 +2,38 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
 from .ollama_client import generate
-import time
 
 from .extractors.image import caption_image, extract_image_text_ocr
 from .extractors.registry import extract_with_meta
 from .pdf_extract import extract_pdf_text_with_meta
 from .scanner import ScanItem
 from .taxonomy import DEFAULT_TAXONOMY_LINES, Taxonomy, parse_taxonomy_lines, taxonomy_to_prompt_block
-from .utils_filename import sanitize_name
+from .utils_filename import (
+    cleanup_generic_words_in_name,
+    ensure_extension,
+    fallback_name_from_summary,
+    name_separator,
+    normalize_separators,
+    propose_name_from_summary_and_facts,
+    sanitize_name,
+)
 from .utils_json import extract_json_dict
+from .utils_parsing import (
+    coerce_date_candidates,
+    coerce_list,
+    extract_amount_token,
+    extract_date_token,
+    is_year,
+    name_token_count,
+    short_entity,
+    split_and_repair_tokens,
+)
 
 _DEFAULT_TAXONOMY, _ = parse_taxonomy_lines(DEFAULT_TAXONOMY_LINES)
 
@@ -69,8 +87,7 @@ class FactsResult:
     model_used: Optional[str] = None
 
 
-def _is_year(value: str) -> bool:
-    return bool(re.fullmatch(r"(19\d{2}|20\d{2})", value))
+# _is_year moved to utils_parsing.is_year
 
 
 def _extract_year_hint_from_path(path: Path) -> Optional[str]:
@@ -87,7 +104,7 @@ def _extract_year_hint_from_path(path: Path) -> Optional[str]:
 
     # Prefer a directory or token that is exactly a year.
     for part in reversed(path.parts):
-        if _is_year(part):
+        if is_year(part):
             return part
 
     # Month-year like mm.yyyy or mm-yyyy or mm_yyyy.
@@ -211,98 +228,15 @@ Broken output:
     return gen.response
 
 
-def _sanitize_name(name: str) -> str:
-    return sanitize_name(name)
-
-
-def _name_separator(kind: str) -> str:
-    return {"space": " ", "underscore": "_", "dash": "-"}.get(kind, " ")
-
-
-_JOIN_BLOCKLIST = {
-    "of",
-    "the",
-    "and",
-    "or",
-    "di",
-    "da",
-    "del",
-    "della",
-    "dei",
-    "delle",
-}
-
-
-def _split_and_repair_tokens(stem: str) -> list[str]:
-    """Split a filename stem into tokens and repair common OCR/encoding artifacts.
-
-    Example artifact: "Mi_iti" -> ["Miiti"] (missing character, but keeps the word together)
-    """
-
-    raw = [t for t in re.split(r"[\s_\-]+", stem.strip()) if t]
-    tokens: list[str] = []
-    for t in raw:
-        t2 = re.sub(r"[\\/:*?\"<>|]", " ", t).strip()
-        if t2:
-            tokens.append(t2)
-
-    i = 0
-    while i < len(tokens) - 1:
-        a = tokens[i]
-        b = tokens[i + 1]
-        if a.isalpha() and b.isalpha() and b[:1].islower() and len(a) <= 3 and a.lower() not in _JOIN_BLOCKLIST:
-            tokens[i] = a + b
-            del tokens[i + 1]
-            continue
-        i += 1
-    return tokens
-
-
-def _normalize_separators(name: str, *, sep: str) -> str:
-    desired = _name_separator(sep)
-    stem = Path(name).stem
-    ext = Path(name).suffix
-    tokens = _split_and_repair_tokens(stem)
-    if not tokens:
-        return _sanitize_name(stem) + ext
-    if desired == " ":
-        return _sanitize_name(" ".join(tokens)) + ext
-    return _sanitize_name(desired.join(tokens)) + ext
-
-
-def _name_token_count(name: str) -> int:
-    return len(re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]+", Path(name).stem))
-
-
-def _coerce_list(value) -> list[str]:
-    if isinstance(value, list):
-        out: list[str] = []
-        for v in value:
-            if isinstance(v, str) and v.strip():
-                out.append(v.strip())
-        return out
-    return []
-
-
-def _coerce_date_candidates(value) -> list[dict]:
-    out: list[dict] = []
-    if not isinstance(value, list):
-        return out
-    for v in value:
-        if not isinstance(v, dict):
-            continue
-        year = v.get("year")
-        if isinstance(year, str) and _is_year(year.strip()):
-            typ = v.get("type")
-            conf = v.get("confidence")
-            out.append(
-                {
-                    "year": year.strip(),
-                    "type": typ if isinstance(typ, str) and typ.strip() else "other",
-                    "confidence": float(conf) if isinstance(conf, (int, float)) else None,
-                }
-            )
-    return out
+# The following functions have been moved to shared utilities:
+# - _sanitize_name -> utils_filename.sanitize_name
+# - _name_separator -> utils_filename.name_separator
+# - _JOIN_BLOCKLIST -> utils_parsing.JOIN_BLOCKLIST
+# - _split_and_repair_tokens -> utils_parsing.split_and_repair_tokens
+# - _normalize_separators -> utils_filename.normalize_separators
+# - _name_token_count -> utils_parsing.name_token_count
+# - _coerce_list -> utils_parsing.coerce_list
+# - _coerce_date_candidates -> utils_parsing.coerce_date_candidates
 
 
 def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
@@ -325,295 +259,18 @@ def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
     return (t[:head].rstrip() + "\n\n…\n\n" + t[-tail:].lstrip()).strip()
 
 
-def _ensure_extension(proposed_name: str, original_filename: str) -> str:
-    original_ext = Path(original_filename).suffix
-    if not original_ext:
-        return proposed_name
-    if proposed_name.lower().endswith(original_ext.lower()):
-        return proposed_name
-    return proposed_name.rstrip(".") + original_ext
-
-
-_STOPWORDS = {
-    # EN
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "of",
-    "to",
-    "for",
-    "in",
-    "on",
-    "with",
-    "by",
-    "from",
-    # IT
-    "il",
-    "lo",
-    "la",
-    "i",
-    "gli",
-    "le",
-    "un",
-    "uno",
-    "una",
-    "e",
-    "o",
-    "di",
-    "da",
-    "del",
-    "della",
-    "dei",
-    "delle",
-    "al",
-    "alla",
-    "alle",
-    "agli",
-    "per",
-    "con",
-    "su",
-    "nel",
-    "nella",
-    "nelle",
-    "all",
-    # Generic / low-signal words often seen in LLM-generated names
-    "this",
-    "document",
-    "doc",
-    "file",
-    "text",
-    "image",
-    "photo",
-    "picture",
-    "scan",
-    "scanned",
-    "documento",
-    "immagine",
-    "foto",
-    "testo",
-    "scansione",
-}
-
-
-_GENERIC_NAME_TOKENS = {
-    "this",
-    "document",
-    "doc",
-    "file",
-    "text",
-    "image",
-    "photo",
-    "picture",
-    "scan",
-    "scanned",
-    "documento",
-    "immagine",
-    "foto",
-    "testo",
-    "scansione",
-}
-
-
-def _cleanup_generic_words_in_name(*, proposed_name: str, original_filename: str) -> str:
-    """Remove generic words like 'this document' from model-proposed names.
-
-    Keep meaningful document types (e.g. invoice, payslip) untouched.
-    """
-
-    original_ext = Path(original_filename).suffix
-    ext = Path(proposed_name).suffix or original_ext
-    stem = Path(proposed_name).stem
-    tokens = _split_and_repair_tokens(stem)
-    cleaned: list[str] = []
-    for t in tokens:
-        if not t:
-            continue
-        if t.lower() in _GENERIC_NAME_TOKENS:
-            continue
-        cleaned.append(t)
-    if not cleaned:
-        return _sanitize_name(Path(original_filename).stem) + ext
-    return _sanitize_name(" ".join(cleaned)) + ext
-
-
-def _fallback_name_from_summary(*, summary: Optional[str], original_filename: str, sep: str) -> str:
-    stem = Path(original_filename).stem
-    ext = Path(original_filename).suffix
-    if not summary:
-        return _sanitize_name(stem) + ext
-
-    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]+", summary)
-    tokens: list[str] = []
-    for w in words:
-        lower = w.lower()
-        if lower in _STOPWORDS:
-            continue
-        if re.fullmatch(r"(19\d{2}|20\d{2})", w):
-            continue
-        if len(w) <= 2:
-            continue
-        tokens.append(w)
-        if len(tokens) >= 10:
-            break
-    if not tokens:
-        return _sanitize_name(stem) + ext
-    name = _name_separator(sep).join(tokens)
-    return _sanitize_name(name) + ext
-
-
-_LEGAL_SUFFIXES_RE = re.compile(
-    r"\b(s\.?p\.?a\.?|s\.?r\.?l\.?|srl|spa|inc\.?|llc|ltd\.?|gmbh|s\.?a\.?s\.?)\b",
-    re.IGNORECASE,
-)
-
-
-def _short_entity(entity: str) -> str:
-    e = re.sub(r"[^\w\sÀ-ÖØ-öø-ÿ]", " ", entity).strip()
-    e = _LEGAL_SUFFIXES_RE.sub("", e).strip()
-    e = re.sub(r"\s+", " ", e)
-    parts = [p for p in e.split() if len(p) >= 2]
-    # Drop common leftover suffix tokens after punctuation removal: "S P A", "S R L", etc.
-    drop = {"sp", "spa", "srl", "sa", "sas", "llc", "inc", "ltd", "gmbh"}
-    parts = [p for p in parts if p.lower() not in drop]
-    return " ".join(parts[:3]).strip()
-
-
-_MONTHS = {
-    # it
-    "gennaio": 1,
-    "febbraio": 2,
-    "marzo": 3,
-    "aprile": 4,
-    "maggio": 5,
-    "giugno": 6,
-    "luglio": 7,
-    "agosto": 8,
-    "settembre": 9,
-    "ottobre": 10,
-    "novembre": 11,
-    "dicembre": 12,
-    # en
-    "january": 1,
-    "february": 2,
-    "march": 3,
-    "april": 4,
-    "may": 5,
-    "june": 6,
-    "july": 7,
-    "august": 8,
-    "september": 9,
-    "october": 10,
-    "november": 11,
-    "december": 12,
-}
-
-
-def _extract_date_token(text: str) -> Optional[str]:
-    t = text
-    m = re.search(r"(?<!\d)(19\d{2}|20\d{2})-(\d{1,2})-(\d{1,2})(?!\d)", t)
-    if m:
-        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return f"{y:04d}-{mo:02d}-{d:02d}"
-
-    m = re.search(r"(?<!\d)(\d{1,2})[./-](\d{1,2})[./-](19\d{2}|20\d{2})(?!\d)", t)
-    if m:
-        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return f"{y:04d}-{mo:02d}-{d:02d}"
-
-    m = re.search(
-        r"(?<!\d)(\d{1,2})\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(19\d{2}|20\d{2})(?!\d)",
-        t,
-        flags=re.IGNORECASE,
-    )
-    if m:
-        d = int(m.group(1))
-        mon_name = m.group(2).strip().lower()
-        y = int(m.group(3))
-        mo = _MONTHS.get(mon_name)
-        if mo:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
-
-    return None
-
-
-def _extract_amount_token(text: str) -> Optional[str]:
-    # Typical: "225,58 €" or "€ 225.58" or "225.58 EUR"
-    m = re.search(r"(€)\s*([0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{2})", text)
-    if m:
-        amount = m.group(2).replace(".", "").replace(",", ".")
-        return f"{amount} EUR"
-    m = re.search(r"([0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{2})\s*(€|eur|euro)", text, flags=re.IGNORECASE)
-    if m:
-        amount = m.group(1).replace(".", "").replace(",", ".")
-        return f"{amount} EUR"
-    return None
-
-
-def _propose_name_from_summary_and_facts(
-    *,
-    summary_long: Optional[str],
-    facts: dict,
-    reference_year: Optional[str],
-    original_filename: str,
-    filename_separator: str,
-) -> Optional[str]:
-    if not summary_long:
-        return None
-
-    doc_type = facts.get("doc_type") if isinstance(facts.get("doc_type"), str) else ""
-    tags = facts.get("tags") if isinstance(facts.get("tags"), list) else []
-    doc_kind = doc_type.strip()
-    if not doc_kind and tags:
-        doc_kind = str(tags[0])
-    doc_kind = re.sub(r"\b(document|documento|file|testo|immagine|image|text)\b", "", doc_kind, flags=re.IGNORECASE)
-    doc_kind = re.sub(r"\s+", " ", doc_kind).strip()
-
-    orgs = facts.get("organizations") if isinstance(facts.get("organizations"), list) else []
-    people = facts.get("people") if isinstance(facts.get("people"), list) else []
-    entity = ""
-    if orgs:
-        entity = _short_entity(str(orgs[0]))
-    elif people:
-        entity = _short_entity(str(people[0]))
-
-    date_token = _extract_date_token(summary_long) or (reference_year if reference_year and _is_year(reference_year) else None)
-    amount_token = _extract_amount_token(summary_long)
-
-    pieces: list[str] = []
-    if doc_kind:
-        pieces.extend(_split_and_repair_tokens(doc_kind)[:4])
-    if entity:
-        pieces.extend(_split_and_repair_tokens(entity)[:3])
-    if date_token:
-        pieces.append(date_token)
-    if amount_token:
-        pieces.extend(_split_and_repair_tokens(amount_token)[:2])
-
-    # De-duplicate while preserving order.
-    seen: set[str] = set()
-    cleaned: list[str] = []
-    for p in pieces:
-        pl = p.lower()
-        if not pl or pl in _STOPWORDS or pl in _GENERIC_NAME_TOKENS:
-            continue
-        if pl in seen:
-            continue
-        seen.add(pl)
-        cleaned.append(p)
-        if len(cleaned) >= 10:
-            break
-
-    if len(cleaned) < 3:
-        return None
-
-    ext = Path(original_filename).suffix
-    name = _name_separator(filename_separator).join(cleaned)
-    proposed = _sanitize_name(name) + ext
-    proposed = _cleanup_generic_words_in_name(proposed_name=proposed, original_filename=original_filename)
-    proposed = _normalize_separators(proposed, sep=filename_separator)
-    return proposed
+# Additional functions moved to shared utilities:
+# - _ensure_extension -> utils_filename.ensure_extension
+# - _STOPWORDS -> utils_parsing.STOPWORDS
+# - _GENERIC_NAME_TOKENS -> utils_parsing.GENERIC_NAME_TOKENS
+# - _cleanup_generic_words_in_name -> utils_filename.cleanup_generic_words_in_name
+# - _fallback_name_from_summary -> utils_filename.fallback_name_from_summary
+# - _LEGAL_SUFFIXES_RE -> utils_parsing.LEGAL_SUFFIXES_RE
+# - _short_entity -> utils_parsing.short_entity
+# - _MONTHS -> utils_parsing.MONTHS
+# - _extract_date_token -> utils_parsing.extract_date_token
+# - _extract_amount_token -> utils_parsing.extract_amount_token
+# - _propose_name_from_summary_and_facts -> utils_filename.propose_name_from_summary_and_facts
 
 
 def _classify_from_text(
@@ -722,16 +379,16 @@ Output JSON schema:
     reference_year = data.get("reference_year")
     if reference_year is not None and not isinstance(reference_year, str):
         reference_year = None
-    if isinstance(reference_year, str) and not _is_year(reference_year.strip()):
+    if isinstance(reference_year, str) and not is_year(reference_year.strip()):
         reference_year = None
 
     proposed_name = data.get("proposed_name")
     if not isinstance(proposed_name, str) or not proposed_name.strip():
         return AnalysisResult(status="skipped", reason="Missing proposed name", model_used=model)
 
-    proposed_name = _ensure_extension(_sanitize_name(proposed_name), filename)
-    proposed_name = _cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
-    proposed_name = _normalize_separators(proposed_name, sep=filename_separator)
+    proposed_name = ensure_extension(sanitize_name(proposed_name), filename)
+    proposed_name = cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
+    proposed_name = normalize_separators(proposed_name, sep=filename_separator)
 
     summary = data.get("summary")
     if not isinstance(summary, str):
@@ -749,10 +406,10 @@ Output JSON schema:
     facts = {
         "language": data.get("language") if isinstance(data.get("language"), str) else None,
         "doc_type": data.get("doc_type") if isinstance(data.get("doc_type"), str) else None,
-        "tags": _coerce_list(data.get("tags")),
-        "people": _coerce_list(data.get("people")),
-        "organizations": _coerce_list(data.get("organizations")),
-        "date_candidates": _coerce_date_candidates(data.get("date_candidates")),
+        "tags": coerce_list(data.get("tags")),
+        "people": coerce_list(data.get("people")),
+        "organizations": coerce_list(data.get("organizations")),
+        "date_candidates": coerce_date_candidates(data.get("date_candidates")),
     }
     facts_json = json.dumps(facts, ensure_ascii=False, sort_keys=True)
 
@@ -774,11 +431,11 @@ Output JSON schema:
     # If the model produced a generic/low-signal name, rebuild it from summary+facts.
     if summary_long:
         orgs = facts.get("organizations") if isinstance(facts.get("organizations"), list) else []
-        org_hint = _short_entity(str(orgs[0])) if orgs else ""
-        low_signal = len(Path(proposed_name).stem) < 18 or _name_token_count(proposed_name) < 4
+        org_hint = short_entity(str(orgs[0])) if orgs else ""
+        low_signal = len(Path(proposed_name).stem) < 18 or name_token_count(proposed_name) < 4
         missing_entity = bool(org_hint) and (org_hint.lower().split()[0] not in proposed_name.lower())
         if low_signal or missing_entity:
-            better = _propose_name_from_summary_and_facts(
+            better = propose_name_from_summary_and_facts(
                 summary_long=summary_long,
                 facts=facts,
                 reference_year=reference_year,
@@ -789,24 +446,24 @@ Output JSON schema:
                 proposed_name = better
 
     # If the proposed name is too short / low-signal, derive one from summary.
-    if len(Path(proposed_name).stem) < 12 or _name_token_count(proposed_name) < 3:
-        proposed_name = _fallback_name_from_summary(summary=summary, original_filename=filename, sep=filename_separator)
-        proposed_name = _cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
-        proposed_name = _normalize_separators(proposed_name, sep=filename_separator)
+    if len(Path(proposed_name).stem) < 12 or name_token_count(proposed_name) < 3:
+        proposed_name = fallback_name_from_summary(summary=summary, original_filename=filename, sep=filename_separator)
+        proposed_name = cleanup_generic_words_in_name(proposed_name=proposed_name, original_filename=filename)
+        proposed_name = normalize_separators(proposed_name, sep=filename_separator)
 
     # If category is unknown, fall back to hint.
     if category == "unknown" and category_hint in categories:
         category = category_hint
 
     # If the model didn't provide a usable year, fall back to filename/path hint.
-    hint = reference_year_hint if (reference_year_hint and _is_year(reference_year_hint)) else None
+    hint = reference_year_hint if (reference_year_hint and is_year(reference_year_hint)) else None
     if (not reference_year) and hint:
         reference_year = hint
 
     # If still missing, allow using a year embedded in the proposed name.
     if not reference_year:
         year_from_name = _extract_year_hint_from_path(Path(proposed_name))
-        if year_from_name and _is_year(year_from_name):
+        if year_from_name and is_year(year_from_name):
             reference_year = year_from_name
 
     # If both exist but differ, trust content only when confidence is sufficiently high.
@@ -974,13 +631,13 @@ Output JSON schema:
         "language": data.get("language") if isinstance(data.get("language"), str) else None,
         "doc_type": data.get("doc_type") if isinstance(data.get("doc_type"), str) else None,
         "purpose": data.get("purpose") if isinstance(data.get("purpose"), str) else None,
-        "tags": _coerce_list(data.get("tags")),
-        "people": _coerce_list(data.get("people")),
-        "organizations": _coerce_list(data.get("organizations")),
-        "addresses": _coerce_list(data.get("addresses")),
+        "tags": coerce_list(data.get("tags")),
+        "people": coerce_list(data.get("people")),
+        "organizations": coerce_list(data.get("organizations")),
+        "addresses": coerce_list(data.get("addresses")),
         "amounts": data.get("amounts") if isinstance(data.get("amounts"), list) else [],
         "identifiers": data.get("identifiers") if isinstance(data.get("identifiers"), list) else [],
-        "date_candidates": _coerce_date_candidates(data.get("date_candidates")),
+        "date_candidates": coerce_date_candidates(data.get("date_candidates")),
         "year_hint_filename": year_hint_filename,
         "year_hint_text": year_hint_text,
     }
