@@ -129,7 +129,7 @@ def build_facts_extraction_prompt(
 You are a document understanding assistant. Reply with VALID JSON only (no extra text).
 
 Goal:
-- Extract high-signal facts for later batch classification and coherent renaming.
+- Extract key facts from the document content below.
 - Do NOT classify or propose a filename in this step.
 - Prefer precision over brevity: if a value is present, copy it exactly; do not guess.
 - {language_line}
@@ -146,7 +146,7 @@ Output JSON schema:
 {{
   "language": "it"|"en"|"unknown",
   "doc_type": string|null,
-  "purpose": string,        // one sentence: why this document exists / what it is for
+  "purpose": string,        // WHAT this document IS (e.g. "electricity bill", "employment contract", "ID card photo"). NOT what you are doing with it. Do NOT mention extraction/classification/renaming.
   "tags": string[],
   "people": string[],
   "organizations": string[],
