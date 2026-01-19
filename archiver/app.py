@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -35,6 +33,7 @@ from .task_state import TaskState
 from .help_screen import HelpScreen
 from .ui_runtime import banner_for_state, count_statuses, derive_task_state, provider_problem
 from .item_mutations import mark_item_classifying, mark_item_scanning, reset_item_to_pending, unclassify_item
+from .open_file import open_with_default_app
 
 
 class ArchiverApp(App):
@@ -197,24 +196,7 @@ class ArchiverApp(App):
         if row_index < 0 or row_index >= len(self._scan_items):
             return
         path = self._scan_items[row_index].path
-        try:
-            if sys.platform.startswith("linux"):
-                subprocess.Popen(
-                    ["xdg-open", str(path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            elif sys.platform == "darwin":
-                subprocess.Popen(
-                    ["open", str(path)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            elif os.name == "nt":
-                os.startfile(str(path))  # type: ignore[attr-defined]
-        except Exception:
-            # Silent failure by design.
-            return
+        open_with_default_app(path)
 
     # Backward-compatible actions (no longer bound to keys).
     async def action_analyze_row(self) -> None:
