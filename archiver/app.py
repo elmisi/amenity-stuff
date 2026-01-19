@@ -368,17 +368,6 @@ class ArchiverApp(App):
             return
         await self.action_open_file()
 
-    async def on_key(self, event: events.Key) -> None:
-        # DataTable may consume Enter depending on Textual versions/settings.
-        # Make "open file" reliable when the file table is focused.
-        if event.key not in {"enter", "return"}:
-            return
-        focused = self.focused
-        if not isinstance(focused, DataTable) or focused.id != "files":
-            return
-        await self.action_open_file()
-        event.stop()
-
     async def _run_discovery(self) -> None:
         notes_widget = self.query_one("#notes", Static)
         notes_widget.update("Detecting local providers…")
@@ -418,6 +407,12 @@ class ArchiverApp(App):
         self._scan_task.finish()
         if self._cache:
             self._scan_items = overlay_scan_items_with_cache(self._scan_items, self._cache)
+        # Sort by file type: images first (use moondream), then rest (use text LLM only).
+        # This minimizes model switching in Ollama.
+        self._scan_items = sorted(
+            self._scan_items,
+            key=lambda it: (0 if it.kind == "image" else 1, it.path.name.lower()),
+        )
         self._render_files()
         self._render_notes()
         self._update_details_from_cursor()
