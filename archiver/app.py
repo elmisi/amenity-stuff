@@ -33,6 +33,7 @@ from .task_builders import build_analysis_config
 from .ui_details import render_details
 from .task_state import TaskState
 from .help_screen import HelpScreen
+from .ui_runtime import banner_for_state, count_statuses, derive_task_state, provider_problem
 
 
 class ArchiverApp(App):
@@ -1192,115 +1193,29 @@ class ArchiverApp(App):
         )
 
     def _render_notes(self) -> None:
-        pending = sum(1 for i in self._scan_items if i.status == "pending")
-        scanning = sum(1 for i in self._scan_items if i.status == "scanning")
-        scanned = sum(1 for i in self._scan_items if i.status == "scanned")
-        classifying = sum(1 for i in self._scan_items if i.status == "classifying")
-        classified = sum(1 for i in self._scan_items if i.status == "classified")
-        moving = sum(1 for i in self._scan_items if i.status == "moving")
-        moved = sum(1 for i in self._scan_items if i.status == "moved")
-        skipped = sum(1 for i in self._scan_items if i.status == "skipped")
-        err = sum(1 for i in self._scan_items if i.status == "error")
-        total = len(self._scan_items)
+        counts = count_statuses(self._scan_items)
+        state = derive_task_state(counts=counts, analysis=self._analysis_task, scan=self._scan_task, archive=self._archive_task)
 
-        state = "idle"
-        if self._analysis_task.running:
-            if self._analysis_task.cancel_requested:
-                state = "stopping…"
-            elif classifying:
-                state = "classifying…"
-            elif scanning:
-                state = "scanning…"
-            else:
-                state = "running…"
-        if self._scan_task.running:
-            state = "scanning…"
-        if self._archive_task.running:
-            state = "archiving…"
-
-        problem, severity = self._provider_problem()
-        banner_text, banner_style = self._banner_for_state(
+        problem, severity = provider_problem(self._discovery)
+        banner_text, banner_style = banner_for_state(
             state=state,
-            scanning=scanning,
-            classifying=classifying,
-            moving=moving,
+            scanning=counts.scanning,
+            classifying=counts.classifying,
+            moving=counts.moving,
             problem=problem,
             severity=severity,
         )
         self.query_one("#notes", Static).update(
             notes_line(
-                scan_items_total=total,
-                pending=pending,
-                scanning=scanning,
-                scanned=scanned,
-                classifying=classifying,
-                classified=classified,
-                moved=moved,
-                skipped=skipped,
-                error=err,
+                scan_items_total=counts.total,
+                pending=counts.pending,
+                scanning=counts.scanning,
+                scanned=counts.scanned,
+                classifying=counts.classifying,
+                classified=counts.classified,
+                moved=counts.moved,
+                skipped=counts.skipped,
+                error=counts.error,
             )
         )
         self.query_one("#banner", Static).update(Text(banner_text, style=banner_style))
-
-    def _provider_problem(self) -> tuple[str | None, str]:
-        """Return (problem, severity) for the active local setup."""
-        if not self._discovery:
-            return ("Detecting providers…", "info")
-        for p in self._discovery.providers:
-            if p.name != "ollama":
-                continue
-            if not p.available:
-                return ("Ollama is not available", "error")
-            if not p.models:
-                return ("No models found in Ollama", "error")
-            return (None, "ok")
-        return ("Ollama is not configured", "error")
-
-    @staticmethod
-    def _banner_for_state(
-        *,
-        state: str,
-        scanning: int,
-        classifying: int,
-        moving: int,
-        problem: str | None,
-        severity: str,
-    ) -> tuple[str, str]:
-        if severity == "error":
-            base = problem or "Error"
-            return (f"ERROR: {base}", "bold white on red")
-        if severity == "info" and state == "idle":
-            return ("Status: idle (detecting providers…)", "bold black on grey70")
-        if state == "idle":
-            return ("Status: idle (no running task)", "bold black on grey70")
-        if state.startswith("stopping"):
-            return ("STOPPING…", "bold white on red")
-        if state.startswith("scanning") and scanning:
-            msg = "RUNNING: scanning pending files…"
-            if problem:
-                msg += f" • {problem}"
-            return (msg, "bold white on blue")
-        if state.startswith("classifying") and classifying:
-            msg = "RUNNING: classifying scanned files…"
-            if problem:
-                msg += f" • {problem}"
-            return (msg, "bold white on blue")
-        if state.startswith("archiving") and moving:
-            msg = "RUNNING: moving files to archive…"
-            if problem:
-                msg += f" • {problem}"
-            return (msg, "bold white on blue")
-        if state.startswith("archiving"):
-            msg = "RUNNING: archiving…"
-            if problem:
-                msg += f" • {problem}"
-            return (msg, "bold white on blue")
-        if state.startswith("scanning"):
-            msg = "RUNNING: scanning directory…"
-            if problem:
-                msg += f" • {problem}"
-            return (msg, "bold white on blue")
-        msg = "RUNNING…"
-        if problem:
-            msg += f" • {problem}"
-        return (msg, "bold white on blue")
