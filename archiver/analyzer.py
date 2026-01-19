@@ -880,9 +880,17 @@ def _extract_facts_from_text(
     output_language: str,
 ) -> FactsResult:
     if output_language == "it":
-        language_line = "Output language: Italian"
+        language_line = (
+            "Output language: Italian. All generated text fields MUST be Italian "
+            "(purpose, doc_type, tags, summary_long, skip_reason). "
+            "Keep proper names (people/orgs/addresses/identifiers) as-is."
+        )
     elif output_language == "en":
-        language_line = "Output language: English"
+        language_line = (
+            "Output language: English. All generated text fields MUST be English "
+            "(purpose, doc_type, tags, summary_long, skip_reason). "
+            "Keep proper names (people/orgs/addresses/identifiers) as-is."
+        )
     else:
         language_line = "Output language: match the input document language (if unclear: English)"
 

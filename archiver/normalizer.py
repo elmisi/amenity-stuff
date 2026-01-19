@@ -417,9 +417,17 @@ def normalize_items(
     taxonomy_block = taxonomy_to_prompt_block(taxonomy)
 
     if output_language == "it":
-        language_line = "Output language: Italian (but keep proper names as-is)"
+        language_line = (
+            "Output language: Italian. All generated text fields MUST be Italian "
+            "(category labels come from taxonomy; summary/proposed_name should be Italian). "
+            "Keep proper names as-is."
+        )
     elif output_language == "en":
-        language_line = "Output language: English (but keep proper names as-is)"
+        language_line = (
+            "Output language: English. All generated text fields MUST be English "
+            "(category labels come from taxonomy; summary/proposed_name should be English). "
+            "Keep proper names as-is."
+        )
     else:
         language_line = "Output language: match each document language; if unclear: English"
 
