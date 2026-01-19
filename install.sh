@@ -120,50 +120,49 @@ fi
 PYTHON_VER=$(python_version "$PYTHON_CMD")
 success "Found $PYTHON_CMD ($PYTHON_VER)"
 
-# --- pipx or pip ---
+# --- pipx check ---
 header "Checking package installer"
 
-USE_PIPX=false
+# Check for PEP 668 externally-managed environment (modern Debian/Ubuntu)
+is_externally_managed() {
+    local py_version
+    py_version=$("$PYTHON_CMD" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    [ -f "/usr/lib/python${py_version}/EXTERNALLY-MANAGED" ] || [ -f "/usr/lib/python3/EXTERNALLY-MANAGED" ]
+}
+
 if has_cmd pipx; then
-    success "Found pipx (recommended)"
-    USE_PIPX=true
+    success "Found pipx"
 else
-    warn "pipx not found"
+    error "pipx not found"
     printf "\n"
-    info "pipx is recommended for CLI applications (isolated environments)."
-    printf "  Install pipx: https://pipx.pypa.io/stable/installation/\n"
+    info "pipx is required to install $APP_NAME."
     printf "\n"
 
-    if has_cmd pip3 || has_cmd pip; then
-        info "Falling back to pip --user"
+    if [ "$OS" = "linux" ]; then
+        info "Install pipx:"
+        printf "  ${BOLD}sudo apt install pipx${NC}\n"
+        printf "  ${BOLD}pipx ensurepath${NC}\n"
+        printf "\n"
+        info "Then restart your shell and re-run this installer."
     else
-        error "Neither pipx nor pip found. Cannot install."
-        exit 1
+        info "Install pipx:"
+        printf "  ${BOLD}brew install pipx${NC}\n"
+        printf "  ${BOLD}pipx ensurepath${NC}\n"
+        printf "\n"
+        info "Then restart your shell and re-run this installer."
     fi
+    exit 1
 fi
 
 # --- Install ---
 header "Installing $APP_NAME"
 
-if [ "$USE_PIPX" = true ]; then
-    info "Installing via pipx..."
-    if pipx install "$REPO_URL"; then
-        success "Installed via pipx"
-    else
-        error "pipx install failed"
-        exit 1
-    fi
+info "Installing via pipx..."
+if pipx install "$REPO_URL"; then
+    success "Installed via pipx"
 else
-    PIP_CMD="pip3"
-    has_cmd pip3 || PIP_CMD="pip"
-    info "Installing via $PIP_CMD --user..."
-    if $PIP_CMD install --user "$REPO_URL"; then
-        success "Installed via $PIP_CMD --user"
-        warn "Make sure ~/.local/bin is in your PATH"
-    else
-        error "$PIP_CMD install failed"
-        exit 1
-    fi
+    error "pipx install failed"
+    exit 1
 fi
 
 # --- Verify installation ---
