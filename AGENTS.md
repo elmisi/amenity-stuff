@@ -72,3 +72,42 @@ When refactoring, do not change functionality unless explicitly requested:
   ```
 - This updates the system-wide `amenity-stuff` command to use your local changes.
 - For quick tests without installing, run directly: `python3 -m archiver`
+
+## SOLID Principles
+
+This codebase follows SOLID principles to ensure maintainability and extensibility:
+
+### Single Responsibility (SRP)
+- Each module has one clear responsibility:
+  - `extractors/` modules handle content extraction (one per format)
+  - `prompts.py` manages all LLM prompt templates
+  - `llm_backend.py` defines the LLM interface abstraction
+  - `utils_parsing.py` provides text/date/amount parsing utilities
+  - `utils_filename.py` handles filename manipulation
+- Keep functions focused: if a function does extraction AND parsing AND LLM calls, split it.
+
+### Open/Closed Principle (OCP)
+- New LLM backends can be added without modifying existing code (implement `LLMBackend` protocol)
+- New extractors can be added by creating a new module in `extractors/` and registering in `registry.py`
+- Prompts are externalized in `prompts.py` for easy customization without touching logic
+
+### Liskov Substitution (LSP)
+- Any `LLMBackend` implementation must honor the protocol contract
+- `OllamaBackend` and future backends must return `LLMResponse` with consistent semantics
+- Backward-compatible module-level functions wrap the new classes
+
+### Interface Segregation (ISP)
+- `LLMBackend` protocol is minimal: just `generate()` method
+- `BaseLLMBackend` adds optional convenience methods (`generate_with_image_file`)
+- Extractors expose only what's needed: `extract_X()` functions returning `(text, meta)`
+
+### Dependency Inversion (DIP)
+- High-level modules (`analyzer.py`) depend on abstractions (`LLMBackend` protocol)
+- Configuration is injected via `AnalysisConfig` dataclass
+- Avoid hardcoded model names; use configuration
+
+### Applying SOLID in Practice
+- When adding a new feature, identify which module owns that responsibility
+- When refactoring, extract helpers with identical logic first, then swap call sites
+- Prefer composition over inheritance; use protocols for loose coupling
+- Keep backward compatibility when changing interfaces
