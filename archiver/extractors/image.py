@@ -227,17 +227,33 @@ def extract_image_smart(
     )
 
     if not caption:
-        error = cap_meta.last_error or "Empty caption from vision model"
+        # Vision failed - try OCR as fallback (might be a scanned document)
+        ocr_text, ocr_meta = extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=ocr_mode)
+        if ocr_text and ocr_meta:
+            # OCR succeeded - use OCR content
+            return ImageExtractionResult(
+                content=ocr_text,
+                caption=None,
+                is_document=True,  # Assume document since OCR worked
+                method="ocr",
+                vision_time_s=cap_meta.caption_time_s,
+                ocr_time_s=ocr_meta.ocr_time_s,
+                vision_model=cap_meta.vision_model_used,
+                ocr_meta=ocr_meta,
+                error=None,
+            )
+        # Both vision and OCR failed
+        vision_error = cap_meta.last_error or "Empty caption"
         return ImageExtractionResult(
             content=None,
             caption=None,
             is_document=False,
             method="vision",
             vision_time_s=cap_meta.caption_time_s,
-            ocr_time_s=None,
+            ocr_time_s=ocr_meta.ocr_time_s if ocr_meta else None,
             vision_model=cap_meta.vision_model_used,
-            ocr_meta=None,
-            error=error,
+            ocr_meta=ocr_meta,
+            error=f"Vision failed ({vision_error}), OCR also failed",
         )
 
     # Step 2: Check if caption indicates a document
