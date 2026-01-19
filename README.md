@@ -8,21 +8,36 @@ You can then move files into an archive structured as `{category}/{year}` (or `{
 
 See `PROJECT_SPEC.md` for a more detailed (and up-to-date) project specification.
 
-## Run
+## Install
 
+One-line install (recommended):
+```bash
+curl -sSL https://raw.githubusercontent.com/elmisi/amenity-stuff/main/install.sh | sh
+```
+
+Uninstall:
+```bash
+curl -sSL https://raw.githubusercontent.com/elmisi/amenity-stuff/main/uninstall.sh | sh
+```
+
+### Alternative: manual install
+
+From source (development):
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install .
 amenity-stuff
 ```
 
-System-wide (recommended):
+System-wide via pipx:
 ```bash
 pipx install git+https://github.com/elmisi/amenity-stuff.git
 amenity-stuff
 ```
 
-You can also pass source/archive on the CLI (defaults: `--source .` and `--archive ./ARCHIVE`):
+## Run
+
+Pass source/archive on the CLI (defaults: `--source .` and `--archive ./ARCHIVE`):
 ```bash
 amenity-stuff --source /path/to/folder --archive /path/to/archive
 ```
