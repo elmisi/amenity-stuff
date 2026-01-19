@@ -804,16 +804,36 @@ class ArchiverApp(App):
 
         def do_one() -> None:
             worker = get_current_worker()
+
+            def finish_with_item(item: ScanItem) -> None:
+                idx = self._scan_index_by_path.get(path_str)
+                if idx is None:
+                    self._analysis_task.running = False
+                    self._render_notes()
+                    return
+                self._scan_items[idx] = item
+                files.update_cell(path_str, "status", status_cell(item.status))
+                files.update_cell(path_str, "category", item.category or "")
+                files.update_cell(path_str, "year", item.reference_year or "")
+                self._update_details(idx)
+                if self._cache and item.status not in ("pending", "scanning"):
+                    self._cache.upsert(item)
+                    self._cache.save()
+                self._analysis_task.running = False
+                self._render_notes()
+
             taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
             cfg = build_analysis_config(settings=self.settings, discovery=self._discovery, taxonomy=taxonomy)
             t0 = time.perf_counter()
             if worker.is_cancelled:
+                stopped = replace(reset, status="pending", reason="Scan stopped")
+                self.call_from_thread(finish_with_item, stopped)
                 return
             res = extract_facts_item(reset, config=cfg)
             elapsed = time.perf_counter() - t0
             if worker.is_cancelled:
                 stopped = replace(reset, status="pending", reason="Scan stopped")
-                self.call_from_thread(apply_result, path_str, stopped)
+                self.call_from_thread(finish_with_item, stopped)
                 return
             updated = replace(
                 reset,
@@ -839,22 +859,7 @@ class ArchiverApp(App):
                 summary=None,
             )
 
-            def apply() -> None:
-                idx = self._scan_index_by_path.get(path_str)
-                if idx is None:
-                    return
-                self._scan_items[idx] = updated
-                files.update_cell(path_str, "status", status_cell(updated.status))
-                files.update_cell(path_str, "category", updated.category or "")
-                files.update_cell(path_str, "year", updated.reference_year or "")
-                self._update_details(idx)
-                if self._cache:
-                    self._cache.upsert(updated)
-                    self._cache.save()
-                self._analysis_task.running = False
-                self._render_notes()
-
-            self.call_from_thread(apply)
+            self.call_from_thread(finish_with_item, updated)
 
         worker = self.run_worker(do_one, thread=True, exclusive=True)
         self._analysis_task.worker = worker
@@ -892,8 +897,28 @@ class ArchiverApp(App):
 
         def do_one() -> None:
             worker = get_current_worker()
+
+            def finish_with_item(item: ScanItem) -> None:
+                idx = self._scan_index_by_path.get(key)
+                if idx is None:
+                    self._analysis_task.running = False
+                    self._render_notes()
+                    return
+                self._scan_items[idx] = item
+                files.update_cell(key, "status", status_cell(item.status))
+                files.update_cell(key, "category", item.category or "")
+                files.update_cell(key, "year", item.reference_year or "")
+                self._update_details(idx)
+                if self._cache and item.status not in ("scanned", "classifying"):
+                    self._cache.upsert(item)
+                    self._cache.save()
+                self._analysis_task.running = False
+                self._render_notes()
+
             t0 = time.perf_counter()
             if worker.is_cancelled:
+                stopped = replace(it, status="scanned", reason="Classification stopped")
+                self.call_from_thread(finish_with_item, stopped)
                 return
             res = normalize_items(
                 items=[it],
@@ -907,8 +932,8 @@ class ArchiverApp(App):
             )
             llm_elapsed = time.perf_counter() - t0
             if worker.is_cancelled:
-                updated = replace(it, status="scanned", reason="Classification stopped")
-                self.call_from_thread(apply_norm, key, updated)
+                stopped = replace(it, status="scanned", reason="Classification stopped")
+                self.call_from_thread(finish_with_item, stopped)
                 return
             upd = res.by_path.get(key) if res.by_path else None
             if res.error or not upd:
@@ -929,22 +954,7 @@ class ArchiverApp(App):
                     classify_model_used=str(upd.get("model_used") or model),
                 )
 
-            def apply() -> None:
-                idx = self._scan_index_by_path.get(key)
-                if idx is None:
-                    return
-                self._scan_items[idx] = updated
-                files.update_cell(key, "status", status_cell(updated.status))
-                files.update_cell(key, "category", updated.category or "")
-                files.update_cell(key, "year", updated.reference_year or "")
-                self._update_details(idx)
-                if self._cache:
-                    self._cache.upsert(updated)
-                    self._cache.save()
-                self._analysis_task.running = False
-                self._render_notes()
-
-            self.call_from_thread(apply)
+            self.call_from_thread(finish_with_item, updated)
 
         worker = self.run_worker(do_one, thread=True, exclusive=True)
         self._analysis_task.worker = worker
