@@ -9,6 +9,32 @@ from typing import Optional
 from ..ollama_client import generate_with_image_file
 
 
+# Keywords that indicate a scanned document (in caption from vision model)
+_DOCUMENT_KEYWORDS = frozenset([
+    "document", "documento", "paper", "carta", "letter", "lettera",
+    "invoice", "fattura", "receipt", "ricevuta", "bill", "bolletta",
+    "contract", "contratto", "form", "modulo", "certificate", "certificato",
+    "statement", "estratto", "report", "rapporto", "notice", "avviso",
+    "text", "testo", "printed", "stampato", "typed", "dattiloscritto",
+    "handwritten", "manoscritto", "scan", "scansione", "page", "pagina",
+    "table", "tabella", "spreadsheet", "foglio", "official", "ufficiale",
+    "signature", "firma", "stamp", "timbro", "header", "intestazione",
+    "letterhead", "carta intestata", "memo", "memorandum", "pdf",
+])
+
+
+def _caption_indicates_document(caption: str) -> bool:
+    """Check if the caption suggests a scanned document rather than a photo."""
+    if not caption:
+        return False
+    caption_lower = caption.lower()
+    # Check for document keywords
+    for keyword in _DOCUMENT_KEYWORDS:
+        if keyword in caption_lower:
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class ImageOcrMeta:
     ocr_time_s: float
@@ -155,4 +181,107 @@ def caption_image(
 
     elapsed = time.perf_counter() - t0
     return caption, ImageCaptionMeta(caption_time_s=elapsed, vision_model_used=used, last_error=last_error)
+
+
+@dataclass(frozen=True)
+class ImageExtractionResult:
+    """Result of smart image extraction."""
+    content: Optional[str]  # Text content (OCR text or caption for LLM)
+    caption: Optional[str]  # Vision model caption
+    is_document: bool  # Whether the image was detected as a document
+    method: str  # "vision" or "vision+ocr"
+    vision_time_s: float
+    ocr_time_s: Optional[float]
+    vision_model: Optional[str]
+    ocr_meta: Optional[ImageOcrMeta]
+    error: Optional[str]
+
+
+def extract_image_smart(
+    path: Path,
+    *,
+    vision_models: tuple[str, ...],
+    vision_prompt: str,
+    base_url: str,
+    ocr_mode: str,
+    max_chars: int = 14000,
+    vision_timeout_s: float = 60.0,
+) -> ImageExtractionResult:
+    """Smart image extraction: vision first, then OCR only if document detected.
+
+    This optimized flow:
+    1. Calls vision model (fast) to get a caption
+    2. Analyzes caption to detect if it's a scanned document
+    3. If document detected, runs OCR to extract text
+    4. Returns appropriate content for text LLM
+
+    For photos (non-documents), this skips the slow OCR step entirely.
+    """
+    # Step 1: Always call vision model first (fast)
+    caption, cap_meta = caption_image(
+        path,
+        vision_models=vision_models,
+        prompt=vision_prompt,
+        base_url=base_url,
+        timeout_s=vision_timeout_s,
+    )
+
+    if not caption:
+        error = cap_meta.last_error or "Empty caption from vision model"
+        return ImageExtractionResult(
+            content=None,
+            caption=None,
+            is_document=False,
+            method="vision",
+            vision_time_s=cap_meta.caption_time_s,
+            ocr_time_s=None,
+            vision_model=cap_meta.vision_model_used,
+            ocr_meta=None,
+            error=error,
+        )
+
+    # Step 2: Check if caption indicates a document
+    is_document = _caption_indicates_document(caption)
+
+    if is_document:
+        # Step 3: Run OCR for documents
+        ocr_text, ocr_meta = extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=ocr_mode)
+        if ocr_text and ocr_meta:
+            # OCR successful - use OCR text as primary content
+            return ImageExtractionResult(
+                content=ocr_text,
+                caption=caption,
+                is_document=True,
+                method="vision+ocr",
+                vision_time_s=cap_meta.caption_time_s,
+                ocr_time_s=ocr_meta.ocr_time_s,
+                vision_model=cap_meta.vision_model_used,
+                ocr_meta=ocr_meta,
+                error=None,
+            )
+        # OCR failed - fall back to caption only
+        return ImageExtractionResult(
+            content=f"IMAGE_CAPTION: {caption}",
+            caption=caption,
+            is_document=True,
+            method="vision",
+            vision_time_s=cap_meta.caption_time_s,
+            ocr_time_s=ocr_meta.ocr_time_s if ocr_meta else None,
+            vision_model=cap_meta.vision_model_used,
+            ocr_meta=ocr_meta,
+            error="OCR failed, using caption only",
+        )
+
+    # Not a document - use caption only (skip OCR)
+    return ImageExtractionResult(
+        content=f"IMAGE_CAPTION: {caption}",
+        caption=caption,
+        is_document=False,
+        method="vision",
+        vision_time_s=cap_meta.caption_time_s,
+        ocr_time_s=None,
+        vision_model=cap_meta.vision_model_used,
+        ocr_meta=None,
+        error=None,
+    )
 

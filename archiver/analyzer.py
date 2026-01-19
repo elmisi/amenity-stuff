@@ -9,7 +9,7 @@ from typing import Optional
 
 from .ollama_client import generate
 
-from .extractors.image import caption_image, extract_image_text_ocr
+from .extractors.image import extract_image_smart, ImageExtractionResult
 from .extractors.registry import extract_with_meta
 from .pdf_extract import extract_pdf_text_with_meta
 from .scanner import ScanItem
@@ -620,73 +620,65 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
 
     if item.kind == "image":
         max_chars = 14000
-        ocr_text, ocr_meta = extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=config.ocr_mode)
-        if ocr_text and ocr_meta:
-            year_hint_text = _extract_year_hint_from_text(ocr_text)
-            excerpt = _content_excerpt_for_llm(ocr_text, max_chars=max_chars)
-            model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
-            t1 = time.perf_counter()
-            res = _extract_facts_from_text(
-                model=model,
-                content=excerpt,
-                filename=path.name,
-                mtime_iso=item.mtime_iso,
-                base_url=config.ollama_base_url,
-                year_hint_filename=year_hint_filename,
-                year_hint_text=year_hint_text,
-                output_language=config.output_language,
-            )
-            llm_elapsed = time.perf_counter() - t1
-            return replace(
-                res,
-                extract_method="ocr",
-                extract_time_s=ocr_meta.ocr_time_s,
-                ocr_time_s=ocr_meta.ocr_time_s,
-                ocr_mode=config.ocr_mode,
-                llm_time_s=llm_elapsed,
-                model_used=model,
-            )
-
-        # Fallback: use a vision model to caption the image.
+        # Smart extraction: vision first, OCR only if document detected
         if config.output_language == "it":
-            caption_prompt = "Describe this image in one sentence in Italian."
+            vision_prompt = "Describe this image in one sentence in Italian."
         else:
-            caption_prompt = "Describe this image in one sentence in English."
-        caption, cap_meta = caption_image(
+            vision_prompt = "Describe this image in one sentence in English."
+
+        img_result = extract_image_smart(
             path,
             vision_models=tuple(_vision_model_candidates(config)),
-            prompt=caption_prompt,
+            vision_prompt=vision_prompt,
             base_url=config.ollama_base_url,
-            timeout_s=180.0,
+            ocr_mode=config.ocr_mode,
+            max_chars=max_chars,
         )
-        if not caption:
-            msg = "Empty caption" if not cap_meta.last_error else f"Vision error: {cap_meta.last_error}"
-            return skipped(msg)
+
+        if not img_result.content:
+            return skipped(img_result.error or "No content extracted from image")
+
+        # Extract year hint from OCR text if available
+        year_hint_text = None
+        if img_result.method == "vision+ocr" and img_result.content and not img_result.content.startswith("IMAGE_CAPTION:"):
+            year_hint_text = _extract_year_hint_from_text(img_result.content)
+
+        content = img_result.content
+        if img_result.method == "vision+ocr":
+            content = _content_excerpt_for_llm(img_result.content, max_chars=max_chars)
 
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
         t1 = time.perf_counter()
         res = _extract_facts_from_text(
             model=model,
-            content=f"IMAGE_CAPTION: {caption}",
+            content=content,
             filename=path.name,
             mtime_iso=item.mtime_iso,
             base_url=config.ollama_base_url,
             year_hint_filename=year_hint_filename,
-            year_hint_text=None,
+            year_hint_text=year_hint_text,
             output_language=config.output_language,
         )
         llm_elapsed = time.perf_counter() - t1
+
+        # Build model string
         used = model
-        if cap_meta.vision_model_used:
-            used = f"{model} (vision: {cap_meta.vision_model_used})"
+        if img_result.vision_model:
+            used = f"{model} (vision: {img_result.vision_model})"
+
+        # Calculate total extract time
+        extract_time = img_result.vision_time_s
+        if img_result.ocr_time_s:
+            extract_time += img_result.ocr_time_s
+
         return replace(
             res,
+            extract_method=img_result.method,
+            extract_time_s=extract_time,
+            ocr_time_s=img_result.ocr_time_s,
+            ocr_mode=config.ocr_mode if img_result.ocr_time_s else None,
             llm_time_s=llm_elapsed,
             model_used=used,
-            extract_method="vision",
-            extract_time_s=cap_meta.caption_time_s,
-            ocr_time_s=None,
-            ocr_mode=None,
         )
 
     return skipped("Unsupported file type")
@@ -756,58 +748,60 @@ def analyze_item(item: ScanItem, *, config: AnalysisConfig) -> AnalysisResult:
         effective_year_hint = filename_year_hint
         category_hint = _category_hint_from_signals(path=path, text=None)
         max_chars = 15000
-        ocr_text, ocr_meta = extract_image_text_ocr(path, max_chars=max_chars, ocr_mode=config.ocr_mode)
-        if ocr_text and ocr_meta:
-            content_year_hint = _extract_year_hint_from_text(ocr_text)
-            effective_year_hint = effective_year_hint or content_year_hint
-            t0 = time.perf_counter()
-            res = _try_text_models(
-                cfg=config,
-                content=_content_excerpt_for_llm(ocr_text, max_chars=14000),
-                filename=path.name,
-                mtime_iso=item.mtime_iso,
-                reference_year_hint=effective_year_hint,
-                category_hint=category_hint,
-            )
-            llm_elapsed = time.perf_counter() - t0
-            res = replace(
-                res,
-                extract_method="ocr",
-                extract_time_s=ocr_meta.ocr_time_s,
-                ocr_time_s=ocr_meta.ocr_time_s,
-                ocr_mode=config.ocr_mode,
-                llm_time_s=llm_elapsed,
-            )
+
+        # Smart extraction: vision first, OCR only if document detected
+        if config.output_language == "it":
+            vision_prompt = "Describe this image in one sentence in Italian."
         else:
-            # Fallback: use a vision model to caption the image.
-            if config.output_language == "it":
-                caption_prompt = "Describe this image in one sentence in Italian."
-            else:
-                caption_prompt = "Describe this image in one sentence in English."
-            caption, cap_meta = caption_image(
-                path,
-                vision_models=tuple(_vision_model_candidates(config)),
-                prompt=caption_prompt,
-                base_url=config.ollama_base_url,
-                timeout_s=180.0,
-            )
-            cap_elapsed = cap_meta.caption_time_s
-            if not caption:
-                msg = "Empty caption" if not cap_meta.last_error else f"Vision error: {cap_meta.last_error}"
-                return skipped_with_year(msg, effective_year_hint)
-            t0 = time.perf_counter()
-            res = _try_text_models(
-                cfg=config,
-                content=f"IMAGE_CAPTION: {caption}",
-                filename=path.name,
-                mtime_iso=item.mtime_iso,
-                reference_year_hint=effective_year_hint,
-                category_hint=category_hint,
-            )
-            llm_elapsed = time.perf_counter() - t0
-            res = replace(res, llm_time_s=llm_elapsed, extract_method="vision", extract_time_s=cap_elapsed)
-            if cap_meta.vision_model_used and res.model_used:
-                res = replace(res, model_used=f"{res.model_used} (vision: {cap_meta.vision_model_used})")
+            vision_prompt = "Describe this image in one sentence in English."
+
+        img_result = extract_image_smart(
+            path,
+            vision_models=tuple(_vision_model_candidates(config)),
+            vision_prompt=vision_prompt,
+            base_url=config.ollama_base_url,
+            ocr_mode=config.ocr_mode,
+            max_chars=max_chars,
+        )
+
+        if not img_result.content:
+            return skipped_with_year(img_result.error or "No content extracted from image", effective_year_hint)
+
+        # Extract year hint from OCR text if available
+        if img_result.method == "vision+ocr" and img_result.content and not img_result.content.startswith("IMAGE_CAPTION:"):
+            content_year_hint = _extract_year_hint_from_text(img_result.content)
+            effective_year_hint = effective_year_hint or content_year_hint
+
+        content = img_result.content
+        if img_result.method == "vision+ocr":
+            content = _content_excerpt_for_llm(img_result.content, max_chars=14000)
+
+        t0 = time.perf_counter()
+        res = _try_text_models(
+            cfg=config,
+            content=content,
+            filename=path.name,
+            mtime_iso=item.mtime_iso,
+            reference_year_hint=effective_year_hint,
+            category_hint=category_hint,
+        )
+        llm_elapsed = time.perf_counter() - t0
+
+        # Calculate total extract time
+        extract_time = img_result.vision_time_s
+        if img_result.ocr_time_s:
+            extract_time += img_result.ocr_time_s
+
+        res = replace(
+            res,
+            extract_method=img_result.method,
+            extract_time_s=extract_time,
+            ocr_time_s=img_result.ocr_time_s,
+            ocr_mode=config.ocr_mode if img_result.ocr_time_s else None,
+            llm_time_s=llm_elapsed,
+        )
+        if img_result.vision_model and res.model_used:
+            res = replace(res, model_used=f"{res.model_used} (vision: {img_result.vision_model})")
 
         if res.status == "skipped":
             return replace(
