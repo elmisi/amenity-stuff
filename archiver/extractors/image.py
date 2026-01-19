@@ -205,7 +205,7 @@ def extract_image_smart(
     base_url: str,
     ocr_mode: str,
     max_chars: int = 14000,
-    vision_timeout_s: float = 60.0,
+    vision_timeout_s: float = 120.0,
 ) -> ImageExtractionResult:
     """Smart image extraction: vision first, then OCR only if document detected.
 
