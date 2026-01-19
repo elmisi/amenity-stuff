@@ -461,9 +461,18 @@ def normalize_items(
 
             cur_facts = _parse_facts_json(src.facts_json) if src else {}
 
+            derived_year = _best_year_from_facts(cur_facts, summary_long=src.summary_long, proposed_name=name) if src else None
+
             # If year is missing, derive it from facts/hints/summary.
-            if not year and src:
-                year = _best_year_from_facts(cur_facts, summary_long=src.summary_long, proposed_name=name)
+            if not year and derived_year:
+                year = derived_year
+            # If the model picked a year that isn't evidenced, prefer the derived one.
+            if year and derived_year and year != derived_year and src:
+                evidence = f"{src.summary_long or ''} {name}"
+                has_year = bool(re.search(rf"(?<!\d){re.escape(year)}(?!\d)", evidence))
+                has_derived = bool(re.search(rf"(?<!\d){re.escape(derived_year)}(?!\d)", evidence))
+                if (not has_year and has_derived) or (int(year) < 1950 and int(derived_year) >= 1950):
+                    year = derived_year
 
             # If the model output is generic, rebuild deterministically from summary_long + facts_json.
             if src and src.summary_long:

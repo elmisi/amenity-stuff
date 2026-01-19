@@ -738,7 +738,13 @@ Output JSON schema:
         summary = None
     summary_long = data.get("summary_long")
     if not isinstance(summary_long, str) or not summary_long.strip():
-        summary_long = None
+        llm_raw_output = llm_raw_output or _truncate_raw_output(out)
+        return FactsResult(
+            status="skipped",
+            reason="Missing summary_long",
+            model_used=model,
+            llm_raw_output=llm_raw_output,
+        )
 
     facts = {
         "language": data.get("language") if isinstance(data.get("language"), str) else None,
