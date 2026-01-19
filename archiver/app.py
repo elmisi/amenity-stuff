@@ -35,6 +35,7 @@ from .ui_runtime import banner_for_state, count_statuses, derive_task_state, pro
 from .item_mutations import mark_item_classifying, mark_item_scanning, reset_item_to_pending, unclassify_item
 from .open_file import open_with_default_app
 from .ui_files_table import build_file_table_rows
+from .cache_overlay import overlay_scan_items_with_cache
 
 
 class ArchiverApp(App):
@@ -443,52 +444,7 @@ class ArchiverApp(App):
         self._scan_items = await worker.wait()
         self._scan_task.finish()
         if self._cache:
-            for idx, it in enumerate(list(self._scan_items)):
-                cached = self._cache.get_matching(it)
-                if not cached:
-                    continue
-                cached_status = {
-                    "analysis": "scanning",
-                    "extracting": "scanning",
-                    "extracted": "scanned",
-                    "ready": "classified",
-                    "normalizing": "classifying",
-                    "normalized": "classified",
-                }.get(cached.status, cached.status)
-                self._scan_items[idx] = replace(
-                    it,
-                    status=cached_status,
-                    reason=cached.reason,
-                    category=cached.category,
-                    reference_year=cached.reference_year,
-                    proposed_name=cached.proposed_name,
-                    summary=cached.summary,
-                    confidence=cached.confidence if isinstance(cached.confidence, (int, float)) else None,
-                    analysis_time_s=cached.analysis_time_s
-                    if isinstance(cached.analysis_time_s, (int, float))
-                    else None,
-                    model_used=cached.model_used if isinstance(cached.model_used, str) else None,
-                    summary_long=cached.summary_long if isinstance(cached.summary_long, str) else None,
-                    facts_json=cached.facts_json if isinstance(cached.facts_json, str) else None,
-                    llm_raw_output=cached.llm_raw_output if isinstance(cached.llm_raw_output, str) else None,
-                    extract_method=cached.extract_method if isinstance(cached.extract_method, str) else None,
-                    extract_time_s=cached.extract_time_s if isinstance(cached.extract_time_s, (int, float)) else None,
-                    llm_time_s=cached.llm_time_s if isinstance(cached.llm_time_s, (int, float)) else None,
-                    ocr_time_s=cached.ocr_time_s if isinstance(cached.ocr_time_s, (int, float)) else None,
-                    ocr_mode=cached.ocr_mode if isinstance(cached.ocr_mode, str) else None,
-                    facts_time_s=cached.facts_time_s if isinstance(cached.facts_time_s, (int, float)) else None,
-                    facts_llm_time_s=cached.facts_llm_time_s
-                    if isinstance(cached.facts_llm_time_s, (int, float))
-                    else None,
-                    facts_model_used=cached.facts_model_used if isinstance(cached.facts_model_used, str) else None,
-                    classify_time_s=cached.classify_time_s if isinstance(cached.classify_time_s, (int, float)) else None,
-                    classify_llm_time_s=cached.classify_llm_time_s
-                    if isinstance(cached.classify_llm_time_s, (int, float))
-                    else None,
-                    classify_model_used=cached.classify_model_used
-                    if isinstance(cached.classify_model_used, str)
-                    else None,
-                )
+            self._scan_items = overlay_scan_items_with_cache(self._scan_items, self._cache)
         self._render_files()
         self._render_notes()
         self._update_details_from_cursor()
