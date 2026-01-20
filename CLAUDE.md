@@ -5,10 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 **amenity-stuff** is a Python TUI (Textual framework) that organizes files using local LLM analysis via Ollama. It follows a 2-phase workflow:
-1. **Scan**: Extract content from files (PDF, images, Office docs, text) + optional OCR, then call LLM to produce structured facts
+1. **Scan**: Extract content from files (PDF, images, Office docs, text, CSV, HTML, GPX, YAML) + optional OCR, then call LLM to produce structured facts
 2. **Classify**: Use facts + user-defined taxonomy to propose category, reference year, and filename
 
 Files can then be moved to an archive structured as `{category}/{year}`.
+
+See `EXTRACTORS.md` for supported formats and how to add new ones.
 
 ## Commands
 
@@ -47,6 +49,9 @@ python3 scripts/bump_version.py
 - **archiver/analyzer.py**: LLM facts/classification logic (~42KB)
 - **archiver/extractors/**: File format handlers (PDF, Office, images, text formats)
   - `registry.py` dispatches to format-specific extractors
+  - See `EXTRACTORS.md` for adding new formats
+- **archiver/taxonomies/**: Default taxonomy files (en.txt, it.txt)
+  - Users can override in `~/.config/amenity-stuff/taxonomies/`
 - **archiver/ui_*.py**: UI rendering and formatting helpers (separated from logic)
 - **archiver/*_screen.py**: Textual screen widgets (settings, help, confirm, etc.)
 - **archiver/scanner.py**: File discovery and `ScanItem` dataclass

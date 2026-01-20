@@ -55,14 +55,33 @@ amenity-stuff report --source /path/to/folder
 You can change:
 - output language (`auto`, `it`, `en`)
 - taxonomy (allowed categories)
-- models (facts / classify / vision), archive folder, filename separator, OCR mode
+- models (facts / classify / vision / vision fallback), archive folder, filename separator, OCR mode
 
 Press `F2` in the TUI to open Settings. Configuration is stored in `~/.config/amenity-stuff/config.json`.
+
+### Taxonomies
 
 Taxonomies are language-specific: when you change the output language, the taxonomy editor shows the categories for that language. Default taxonomies are provided for English and Italian.
 
 Taxonomy format (one per line):
 `name | description | examples` (examples are optional, separated by `;`).
+
+**External taxonomy files** are loaded from (in order):
+1. `~/.config/amenity-stuff/taxonomies/{lang}.txt` (user override)
+2. `archiver/taxonomies/{lang}.txt` (bundled defaults)
+
+To customize, copy the bundled file and edit:
+```bash
+mkdir -p ~/.config/amenity-stuff/taxonomies
+cp archiver/taxonomies/it.txt ~/.config/amenity-stuff/taxonomies/it.txt
+```
+
+### Vision Model Fallback
+
+The "Vision fallback" setting allows configuring a secondary vision model when the primary one fails:
+- `none`: no fallback (default)
+- `auto`: automatically use llava:7b as fallback
+- explicit model: e.g., `llava:7b`, `minicpm-v`
 
 ## Security & Privacy
 - Local-first: the goal is to avoid sending content to external services.
@@ -111,6 +130,11 @@ Supported formats include:
 - images: `jpg/jpeg/png`
 - office: `doc/docx/odt/xls/xlsx` (see optional dependencies above)
 - text: `txt/md/json/rtf/svg/kmz`
+- data: `csv/yaml/yml`
+- web: `html/htm`
+- GPS: `gpx`
+
+See `EXTRACTORS.md` for details on how each format is handled and how to add new ones.
 
 ### Keys
 - `ctrl+r` reload dir
