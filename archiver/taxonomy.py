@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Optional
 
 
@@ -62,11 +64,63 @@ DEFAULT_TAXONOMIES: dict[str, tuple[str, ...]] = {
 DEFAULT_TAXONOMY_LINES: tuple[str, ...] = DEFAULT_TAXONOMY_EN
 
 
+def _get_user_config_dir() -> Path:
+    """Get the user config directory for amenity-stuff."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "amenity-stuff"
+
+
+def _get_package_taxonomies_dir() -> Path:
+    """Get the package taxonomies directory."""
+    return Path(__file__).parent / "taxonomies"
+
+
+def _load_taxonomy_from_file(path: Path) -> tuple[str, ...] | None:
+    """Load taxonomy lines from a file. Returns None if file not found."""
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+        lines = tuple(ln.rstrip("\n") for ln in text.splitlines() if ln.strip())
+        return lines if lines else None
+    except Exception:
+        return None
+
+
+def load_taxonomy_for_language(lang: str) -> tuple[str, ...]:
+    """Load taxonomy for a language, checking user config first, then package files.
+
+    Search order:
+    1. ~/.config/amenity-stuff/taxonomies/{lang}.txt (user override)
+    2. {package}/taxonomies/{lang}.txt (bundled)
+    3. Hardcoded default (backward compatibility)
+    """
+    # 1. Try user config directory
+    user_file = _get_user_config_dir() / "taxonomies" / f"{lang}.txt"
+    lines = _load_taxonomy_from_file(user_file)
+    if lines:
+        return lines
+
+    # 2. Try package taxonomies directory
+    package_file = _get_package_taxonomies_dir() / f"{lang}.txt"
+    lines = _load_taxonomy_from_file(package_file)
+    if lines:
+        return lines
+
+    # 3. Fall back to hardcoded default
+    return DEFAULT_TAXONOMIES.get(lang, DEFAULT_TAXONOMY_EN)
+
+
 def get_default_taxonomy_for_language(lang: str) -> tuple[str, ...]:
-    """Return the default taxonomy for a given language code."""
-    if lang in DEFAULT_TAXONOMIES:
-        return DEFAULT_TAXONOMIES[lang]
-    return DEFAULT_TAXONOMY_EN
+    """Return the default taxonomy for a given language code.
+
+    Uses load_taxonomy_for_language which checks:
+    1. User config (~/.config/amenity-stuff/taxonomies/{lang}.txt)
+    2. Package files (archiver/taxonomies/{lang}.txt)
+    3. Hardcoded defaults
+    """
+    return load_taxonomy_for_language(lang)
 
 
 def get_effective_language(output_language: str) -> str:
