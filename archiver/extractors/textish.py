@@ -62,5 +62,37 @@ def extract_textish_with_meta(
             return None, "No extractable KMZ/KML text", None
         return text, "kmz", TextExtractMeta(method="kmz", extract_time_s=time.perf_counter() - t0)
 
+    if ext == "gpx":
+        from .textish_gpx import extract_gpx_text
+
+        text = extract_gpx_text(path, max_chars=max_chars)
+        if not text:
+            return None, "No extractable GPX data", None
+        return text, "gpx", TextExtractMeta(method="gpx", extract_time_s=time.perf_counter() - t0)
+
+    if ext in {"html", "htm"}:
+        from .textish_html import extract_html_text
+
+        text = extract_html_text(path, max_chars=max_chars)
+        if not text:
+            return None, "No extractable HTML text", None
+        return text, "html", TextExtractMeta(method="html", extract_time_s=time.perf_counter() - t0)
+
+    if ext == "csv":
+        from .textish_csv import extract_csv_text
+
+        text = extract_csv_text(path, max_chars=max_chars)
+        if not text:
+            return None, "No extractable CSV data", None
+        return text, "csv", TextExtractMeta(method="csv", extract_time_s=time.perf_counter() - t0)
+
+    if ext in {"yaml", "yml"}:
+        from .textish_yaml import extract_yaml_text
+
+        text = extract_yaml_text(path, max_chars=max_chars)
+        if not text:
+            return None, "No extractable YAML content", None
+        return text, "yaml", TextExtractMeta(method="yaml", extract_time_s=time.perf_counter() - t0)
+
     return None, "Unsupported text type", None
 

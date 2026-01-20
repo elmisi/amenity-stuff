@@ -24,6 +24,15 @@ KIND_BY_EXTENSION: dict[str, str] = {
     "rtf": "rtf",
     "svg": "svg",
     "kmz": "kmz",
+    # Data formats
+    "csv": "csv",
+    "yaml": "yaml",
+    "yml": "yaml",
+    # Web
+    "html": "html",
+    "htm": "html",
+    # GPS
+    "gpx": "gpx",
 }
 
 

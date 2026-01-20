@@ -174,3 +174,7 @@ class HtmlExtractMeta:
 | `rtf` | `textish_rtf.py` | unrtf (optional) |
 | `svg` | `textish_svg.py` | (none, uses xml.etree) |
 | `kmz` | `textish_kmz.py` | (none, uses zipfile) |
+| `gpx` | `textish_gpx.py` | (none, uses xml.etree) |
+| `html/htm` | `textish_html.py` | (none, uses regex) |
+| `csv` | `textish_csv.py` | (none, uses csv module) |
+| `yaml/yml` | `textish_yaml.py` | (none) |

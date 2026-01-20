@@ -28,6 +28,6 @@ def extract_with_meta(
         return extract_pdf_text_with_meta(path, max_chars=max_chars, ocr_mode=ocr_mode)
     if kind in {"doc", "docx", "odt", "xls", "xlsx"}:
         return extract_office_text_with_meta(path, max_chars=max_chars)
-    if kind in {"json", "md", "txt", "rtf", "svg", "kmz"}:
+    if kind in {"json", "md", "txt", "rtf", "svg", "kmz", "gpx", "html", "csv", "yaml"}:
         return extract_textish_with_meta(path, max_chars=max_chars)
     return None, "Unsupported file type", None
