@@ -28,6 +28,23 @@ from .utils_parsing import (
 )
 from .prompts import build_normalize_batch_prompt
 
+_NORMALIZE_GENERATE_OPTIONS = {"temperature": 0, "num_predict": 220}
+_NORMALIZE_RESPONSE_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "category": {"type": "string"},
+            "reference_year": {"type": ["string", "null"]},
+            "proposed_name": {"type": "string"},
+            "summary": {"type": "string"},
+            "confidence": {"type": ["number", "null"]},
+        },
+        "required": ["path", "category", "reference_year", "proposed_name", "summary", "confidence"],
+    },
+}
+
 
 @dataclass(frozen=True)
 class NormalizationResult:
@@ -157,6 +174,47 @@ def _parse_facts_json(value: Optional[str]) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _compact_summary_long(value: Optional[str], *, max_chars: int = 280) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split()).strip()
+    if not text:
+        return None
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def _facts_payload_for_model(facts_obj: dict) -> dict:
+    if not isinstance(facts_obj, dict):
+        return {}
+
+    compact: dict[str, object] = {}
+    for key in ("language", "doc_type", "purpose", "year_hint_filename", "year_hint_text"):
+        value = facts_obj.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value.strip()
+
+    for key in ("tags", "people", "organizations", "addresses"):
+        value = facts_obj.get(key)
+        if isinstance(value, list):
+            compact[key] = [str(item).strip() for item in value if isinstance(item, str) and str(item).strip()][:4]
+
+    amounts = facts_obj.get("amounts")
+    if isinstance(amounts, list):
+        compact["amounts"] = [item for item in amounts if isinstance(item, dict)][:3]
+
+    identifiers = facts_obj.get("identifiers")
+    if isinstance(identifiers, list):
+        compact["identifiers"] = [item for item in identifiers if isinstance(item, dict)][:3]
+
+    dates = facts_obj.get("date_candidates")
+    if isinstance(dates, list):
+        compact["date_candidates"] = [item for item in dates if isinstance(item, dict)][:4]
+
+    return compact
+
+
 def _best_year_from_facts(facts: dict, *, summary_long: Optional[str], proposed_name: Optional[str]) -> Optional[str]:
     # 1) explicit candidates from phase 1
     candidates = facts.get("date_candidates")
@@ -239,6 +297,26 @@ def normalize_items(
             return NormalizationResult(by_path=by_path, model_used=model, error="Cancelled")
         payload = []
         by_input_path = {str(it.path): it for it in batch}
+        token_to_path = {f"doc_{idx + 1}": str(it.path) for idx, it in enumerate(batch)}
+        path_to_token = {path: token for token, path in token_to_path.items()}
+
+        def fallback_to_single_items(error_reason: str) -> NormalizationResult:
+            fallback_by_path: dict[str, dict] = {}
+            for single in batch:
+                single_result = normalize_items(
+                    items=[single],
+                    model=model,
+                    base_url=base_url,
+                    taxonomy=taxonomy,
+                    output_language=output_language,
+                    filename_separator=filename_separator,
+                    chunk_size=1,
+                    should_cancel=should_cancel,
+                )
+                if single_result.error:
+                    return NormalizationResult(by_path={**by_path, **fallback_by_path}, model_used=model, error=error_reason)
+                fallback_by_path.update(single_result.by_path)
+            return NormalizationResult(by_path={**by_path, **fallback_by_path}, model_used=model)
 
         def apply_row(row: dict, *, path: str) -> None:
             src = by_input_path.get(path)
@@ -315,12 +393,13 @@ def normalize_items(
             if isinstance(facts_obj, dict) and "purpose" in facts_obj:
                 facts_obj = dict(facts_obj)
                 facts_obj.pop("purpose", None)
+            path_str = str(it.path)
             payload.append(
                 {
-                    "path": str(it.path),
+                    "path": path_to_token.get(path_str, path_str),
                     "kind": it.kind,
-                    "summary_long": it.summary_long,
-                    "facts": facts_obj,
+                    "summary_long": _compact_summary_long(it.summary_long),
+                    "facts": _facts_payload_for_model(facts_obj),
                     "current": {
                         "category": it.category,
                         "reference_year": it.reference_year,
@@ -339,11 +418,32 @@ def normalize_items(
 
         if should_cancel and should_cancel():
             return NormalizationResult(by_path=by_path, model_used=model, error="Cancelled")
-        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
+        gen = generate(
+            model=model,
+            prompt=prompt,
+            base_url=base_url,
+            timeout_s=180.0,
+            response_format=_NORMALIZE_RESPONSE_SCHEMA,
+            think=False,
+            keep_alive="5m",
+            options=_NORMALIZE_GENERATE_OPTIONS,
+        )
         if gen.error:
+            if len(batch) > 1:
+                fallback = fallback_to_single_items(f"Batch normalization failed: {gen.error}")
+                if fallback.error is None:
+                    by_path = fallback.by_path
+                    continue
             return NormalizationResult(by_path=by_path, model_used=model, error=gen.error)
         data = _extract_json(gen.response)
+        if isinstance(data, dict) and len(batch) == 1:
+            data = [data]
         if not isinstance(data, list):
+            if len(batch) > 1:
+                fallback = fallback_to_single_items("Unparseable output (JSON list)")
+                if fallback.error is None:
+                    by_path = fallback.by_path
+                    continue
             return NormalizationResult(by_path=by_path, model_used=model, error="Unparseable output (JSON list)")
 
         # Some models may fail to echo back the full absolute path. For single-item normalization we
@@ -357,13 +457,14 @@ def normalize_items(
                 if len(batch) == 1 and fallback_row is None:
                     fallback_row = row
                 continue
-            src = by_input_path.get(path)
+            actual_path = token_to_path.get(path, path)
+            src = by_input_path.get(actual_path)
             # Ignore mismatched paths for multi-item batches; for per-file this is handled below.
             if not src:
                 if len(batch) == 1 and fallback_row is None:
                     fallback_row = row
                 continue
-            apply_row(row, path=path)
+            apply_row(row, path=actual_path)
 
         if len(batch) == 1 and not by_path and fallback_row is not None:
             only_path = str(batch[0].path)

@@ -16,11 +16,15 @@ def build_analysis_config(*, settings: "Settings", discovery: "DiscoveryResult |
     # Facts extraction is latency-sensitive: prefer a smaller model when available.
     if (not settings.facts_model) or settings.facts_model == "auto":
         prefer_fast = (
-            "llama3.2:3b-instruct",
-            "phi3:mini",
-            "phi3:medium",
-            "mistral:7b-instruct",
-            "qwen2.5:7b-instruct",
+            "gemma3:1b",
+            "qwen2.5:3b-instruct",
+            "phi4-mini:latest",
+            "phi4-mini",
+            "qwen3:4b",
+            "qwen3.5:4b",
+            "ministral-3:3b",
+            "gemma2:2b",
+            "qwen2.5:7b",
         )
         ordered = [m for m in prefer_fast if m in text_models] + [m for m in text_models if m not in prefer_fast]
         text_models = tuple(ordered)

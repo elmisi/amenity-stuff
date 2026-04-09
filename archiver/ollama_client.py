@@ -63,6 +63,10 @@ class OllamaBackend(BaseLLMBackend):
         model: str,
         timeout_s: float = 120.0,
         images_b64: Optional[list[str]] = None,
+        response_format: str | dict[str, Any] | None = None,
+        think: bool | str | None = None,
+        keep_alive: str | int | None = None,
+        options: Optional[dict[str, Any]] = None,
     ) -> LLMResponse:
         """Generate a response from Ollama.
 
@@ -83,6 +87,14 @@ class OllamaBackend(BaseLLMBackend):
         }
         if images_b64:
             payload["images"] = images_b64
+        if response_format is not None:
+            payload["format"] = response_format
+        if think is not None:
+            payload["think"] = think
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
+        if options:
+            payload["options"] = options
 
         try:
             data = _post_json(url, payload, timeout_s=timeout_s)
@@ -120,6 +132,10 @@ def generate(
     base_url: str = "http://localhost:11434",
     timeout_s: float = 120.0,
     images_b64: Optional[list[str]] = None,
+    response_format: str | dict[str, Any] | None = None,
+    think: bool | str | None = None,
+    keep_alive: str | int | None = None,
+    options: Optional[dict[str, Any]] = None,
 ) -> OllamaGenerateResult:
     """Generate a response from Ollama (backward-compatible function)."""
     backend = _get_backend(base_url)
@@ -128,6 +144,10 @@ def generate(
         model=model,
         timeout_s=timeout_s,
         images_b64=images_b64,
+        response_format=response_format,
+        think=think,
+        keep_alive=keep_alive,
+        options=options,
     )
     return OllamaGenerateResult(
         response=response.text,
@@ -154,4 +174,5 @@ def generate_with_image_file(
         base_url=base_url,
         timeout_s=timeout_s,
         images_b64=[b64],
+        keep_alive="5m",
     )

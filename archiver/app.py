@@ -138,6 +138,21 @@ class ArchiverApp(App):
     def _save_app_config(self) -> None:
         save_config(app_config_from_settings(self.settings))
 
+    def _ordered_classify_models(self, models: tuple[str, ...]) -> tuple[str, ...]:
+        prefer = (
+            "qwen2.5:3b-instruct",
+            "qwen3:4b",
+            "phi4-mini:latest",
+            "phi4-mini",
+            "gemma3:1b",
+            "qwen3.5:4b",
+            "ministral-3:3b",
+            "gemma2:2b",
+        )
+        ordered = [model for model in prefer if model in models]
+        ordered.extend(model for model in models if model not in ordered)
+        return tuple(ordered)
+
     async def _post_setup(self) -> None:
         await self._run_discovery()
         await self._run_scan()
@@ -522,12 +537,13 @@ class ArchiverApp(App):
             return
         taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
         text_models, _ = pick_model_candidates(self._discovery)
+        text_models = self._ordered_classify_models(text_models)
         if self.settings.classify_model and self.settings.classify_model != "auto":
             text_models = (
                 self.settings.classify_model,
                 *tuple(m for m in text_models if m != self.settings.classify_model),
             )
-        model = text_models[0] if text_models else "qwen2.5:7b-instruct"
+        model = text_models[0] if text_models else "gemma3:1b"
 
         targets = [it for it in self._scan_items if it.status == "scanned"]
         if not targets:
@@ -538,21 +554,16 @@ class ArchiverApp(App):
         self._render_notes()
 
         files = self.query_one("#files", DataTable)
-
-        def mark_classifying(path_str: str) -> None:
+        for it in targets:
+            path_str = str(it.path)
             idx = self._scan_index_by_path.get(path_str)
             if idx is None:
-                return
-            it = self._scan_items[idx]
-            if it.status != "scanned":
-                return
-            self._scan_items[idx] = mark_item_classifying(it)
+                continue
+            self._scan_items[idx] = mark_item_classifying(self._scan_items[idx])
             files.update_cell(path_str, "status", status_cell("classifying"))
-            self._render_notes()
-            if files.cursor_row == idx:
-                self._update_details(idx)
+        self._render_notes()
 
-        def apply_norm(path_str: str, updated: ScanItem) -> None:
+        def apply_result(path_str: str, updated: ScanItem) -> None:
             idx = self._scan_index_by_path.get(path_str)
             if idx is None:
                 return
@@ -563,93 +574,85 @@ class ArchiverApp(App):
             self._render_notes()
             if files.cursor_row == idx:
                 self._update_details(idx)
-            if self._cache:
-                self._cache.upsert(updated)
-                self._cache.save()
 
-        def finish(*, cancelled: bool, error_reason: str | None = None) -> None:
-            if cancelled or error_reason:
-                reason = error_reason or "Classification stopped"
-                for idx, it in enumerate(list(self._scan_items)):
-                    if it.status != "classifying":
-                        continue
-                    updated = replace(it, status="scanned", reason=reason)
-                    self._scan_items[idx] = updated
-                    key = str(updated.path)
-                    files.update_cell(key, "status", status_cell("scanned"))
+        def finish() -> None:
+            if self._cache:
+                for item in self._scan_items:
+                    if item.status in {"classified", "scanned"}:
+                        self._cache.upsert(item)
+                self._cache.save()
             self._analysis_task.running = False
             self._render_notes()
 
         def do_classify_background() -> None:
             worker = get_current_worker()
             try:
+                batch_size = 12 if len(targets) > 12 else max(4, len(targets))
+                t0 = time.perf_counter()
+                res = normalize_items(
+                    items=targets,
+                    model=model,
+                    base_url="http://localhost:11434",
+                    taxonomy=taxonomy,
+                    output_language=self.settings.output_language,
+                    filename_separator=self.settings.filename_separator,
+                    chunk_size=batch_size,
+                    should_cancel=lambda: worker.is_cancelled,
+                )
+                llm_elapsed = time.perf_counter() - t0
+
+                base_reason = None
+                if worker.is_cancelled or res.error == "Cancelled":
+                    base_reason = "Classification stopped"
+                elif res.error:
+                    base_reason = f"Classification error: {res.error}"
+
                 for it in targets:
-                    if worker.is_cancelled:
-                        break
                     path_str = str(it.path)
-                    self.call_from_thread(mark_classifying, path_str)
-
-                    t0 = time.perf_counter()
-                    res = normalize_items(
-                        items=[it],
-                        model=model,
-                        base_url="http://localhost:11434",
-                        taxonomy=taxonomy,
-                        output_language=self.settings.output_language,
-                        filename_separator=self.settings.filename_separator,
-                        chunk_size=1,
-                        should_cancel=lambda: worker.is_cancelled,
-                    )
-                    llm_elapsed = time.perf_counter() - t0
-
-                    if res.error:
-                        reason = "Classification stopped" if worker.is_cancelled else f"Classification error: {res.error}"
-                        idx = self._scan_index_by_path.get(path_str)
-                        if idx is not None:
-                            cur = self._scan_items[idx]
-                            if cur.status == "classifying":
-                                self.call_from_thread(apply_norm, path_str, replace(cur, status="scanned", reason=reason))
-                        continue
-
-                    upd = res.by_path.get(path_str) if res.by_path else None
-                    if not upd:
-                        idx = self._scan_index_by_path.get(path_str)
-                        if idx is not None:
-                            cur = self._scan_items[idx]
-                            if cur.status == "classifying":
-                                self.call_from_thread(
-                                    apply_norm,
-                                    path_str,
-                                    replace(cur, status="scanned", reason="Classification error: no output"),
-                                )
-                        continue
-
                     idx = self._scan_index_by_path.get(path_str)
                     if idx is None:
                         continue
                     cur = self._scan_items[idx]
-                    updated = replace(
-                        cur,
-                        status="classified",
-                        category=upd.get("category") or cur.category or "unknown",
-                        reference_year=upd.get("reference_year") or cur.reference_year,
-                        proposed_name=upd.get("proposed_name") or cur.proposed_name,
-                        summary=upd.get("summary") or cur.summary,
-                        model_used=str(upd.get("model_used") or cur.model_used or model),
-                        reason=None,
-                        classify_time_s=llm_elapsed,
-                        classify_llm_time_s=llm_elapsed,
-                        classify_model_used=str(upd.get("model_used") or cur.model_used or model),
-                    )
-                    self.call_from_thread(apply_norm, path_str, updated)
-                self.call_from_thread(finish, cancelled=worker.is_cancelled)
+                    if cur.status != "classifying":
+                        continue
+                    upd = res.by_path.get(path_str) if res.by_path else None
+                    if upd:
+                        updated = replace(
+                            cur,
+                            status="classified",
+                            category=upd.get("category") or cur.category or "unknown",
+                            reference_year=upd.get("reference_year") or cur.reference_year,
+                            proposed_name=upd.get("proposed_name") or cur.proposed_name,
+                            summary=upd.get("summary") or cur.summary,
+                            model_used=str(upd.get("model_used") or cur.model_used or model),
+                            reason=None,
+                            classify_time_s=llm_elapsed,
+                            classify_llm_time_s=llm_elapsed,
+                            classify_model_used=str(upd.get("model_used") or cur.model_used or model),
+                        )
+                    else:
+                        updated = replace(
+                            cur,
+                            status="scanned",
+                            reason=base_reason or "Classification error: no output",
+                        )
+                    self.call_from_thread(apply_result, path_str, updated)
+                self.call_from_thread(finish)
             except Exception as exc:  # noqa: BLE001
-                # Ensure we never leave rows stuck in "classifying" if something goes wrong.
-                self.call_from_thread(
-                    finish,
-                    cancelled=False,
-                    error_reason=f"Classification crashed: {type(exc).__name__}",
-                )
+                for it in targets:
+                    path_str = str(it.path)
+                    idx = self._scan_index_by_path.get(path_str)
+                    if idx is None:
+                        continue
+                    cur = self._scan_items[idx]
+                    if cur.status != "classifying":
+                        continue
+                    self.call_from_thread(
+                        apply_result,
+                        path_str,
+                        replace(cur, status="scanned", reason=f"Classification crashed: {type(exc).__name__}"),
+                    )
+                self.call_from_thread(finish)
 
         worker = self.run_worker(do_classify_background, thread=True, exclusive=True)
         self._analysis_task.worker = worker
@@ -877,12 +880,13 @@ class ArchiverApp(App):
 
         taxonomy, _ = parse_taxonomy_lines(self.settings.get_taxonomy_lines())
         text_models, _ = pick_model_candidates(self._discovery)
+        text_models = self._ordered_classify_models(text_models)
         if self.settings.classify_model and self.settings.classify_model != "auto":
             text_models = (
                 self.settings.classify_model,
                 *tuple(m for m in text_models if m != self.settings.classify_model),
             )
-        model = text_models[0] if text_models else "qwen2.5:7b-instruct"
+        model = text_models[0] if text_models else "gemma3:1b"
 
         key = str(it.path)
         self._scan_items[row_index] = mark_item_classifying(it)

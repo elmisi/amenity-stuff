@@ -56,7 +56,7 @@ Goal:
 - estimate the reference year (reference_year) the document refers to
 - estimate the production year (production_year) (if unknown: null)
 - extract structured facts for later normalization (language, doc_type, tags, people, organizations, date candidates)
-- write a richer summary_long (4-10 sentences)
+- write a richer but compact summary_long (3-6 sentences)
 - propose a meaningful, descriptive file name (proposed_name) using words separated by spaces (not underscores)
   - use 6-12 words when possible (not too short)
   - include key entities (company/person), and month/period if present
@@ -132,6 +132,7 @@ Goal:
 - Extract key facts from the document content below.
 - Do NOT classify or propose a filename in this step.
 - Prefer precision over brevity: if a value is present, copy it exactly; do not guess.
+- Keep generated text compact; avoid verbose explanations.
 - {language_line}
 
 Inputs:
@@ -154,7 +155,7 @@ Output JSON schema:
   "amounts": [{{"value": number, "currency": string, "raw": string}}],
   "identifiers": [{{"type": string, "value": string}}],
   "date_candidates": [{{"year": string, "type": "reference"|"production"|"other", "confidence": number, "source": "filename"|"content"}}],
-  "summary_long": string,   // 6-12 sentences, include the most important extracted values (who/what/when/how much/ids)
+  "summary_long": string,   // 2-4 sentences, include only the highest-signal values (who/what/when/how much/ids)
   "confidence": number,
   "skip_reason": string|null
 }}

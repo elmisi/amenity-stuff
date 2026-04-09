@@ -45,7 +45,7 @@ _DEFAULT_TAXONOMY, _ = parse_taxonomy_lines(DEFAULT_TAXONOMY_LINES)
 
 @dataclass(frozen=True)
 class AnalysisConfig:
-    text_model: str = "qwen2.5:7b-instruct"
+    text_model: str = "gemma3:1b"
     vision_model: str = "moondream:latest"
     text_models: tuple[str, ...] = ()
     vision_models: tuple[str, ...] = ()
@@ -206,6 +206,10 @@ def _extract_json(text: str) -> Optional[dict]:
 
 
 _MAX_LLM_RAW_OUTPUT_CHARS = 12000
+_JSON_RESPONSE_FORMAT = "json"
+_JSON_REPAIR_OPTIONS = {"temperature": 0, "num_predict": 220}
+_FACTS_GENERATE_OPTIONS = {"temperature": 0, "num_predict": 400}
+_CLASSIFY_GENERATE_OPTIONS = {"temperature": 0, "num_predict": 320}
 
 
 def _truncate_raw_output(text: str) -> str:
@@ -219,7 +223,16 @@ def _repair_json_dict_via_llm(*, model: str, raw_output: str, base_url: str) -> 
     snippet = _truncate_raw_output(raw_output)
     prompt = build_json_repair_prompt(snippet=snippet)
     try:
-        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=60.0)
+        gen = generate(
+            model=model,
+            prompt=prompt,
+            base_url=base_url,
+            timeout_s=60.0,
+            response_format=_JSON_RESPONSE_FORMAT,
+            think=False,
+            keep_alive="5m",
+            options=_JSON_REPAIR_OPTIONS,
+        )
     except Exception:
         return None
     if gen.error:
@@ -238,7 +251,7 @@ def _repair_json_dict_via_llm(*, model: str, raw_output: str, base_url: str) -> 
 # - _coerce_date_candidates -> utils_parsing.coerce_date_candidates
 
 
-def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
+def _content_excerpt_for_llm(text: str, *, max_chars: int = 10000) -> str:
     """Keep within a predictable size while preserving high-signal regions.
 
     Strategy: if too long, keep head + tail (documents often contain totals/ids on the last part).
@@ -247,9 +260,9 @@ def _content_excerpt_for_llm(text: str, *, max_chars: int = 14000) -> str:
     budget = max_chars
     # Very large documents can explode LLM latency; cap harder.
     if len(t) > max_chars * 8:
-        budget = min(budget, 6000)
+        budget = min(budget, 5000)
     elif len(t) > max_chars * 4:
-        budget = min(budget, 9000)
+        budget = min(budget, 8000)
 
     if len(t) <= budget:
         return t
@@ -298,7 +311,16 @@ def _classify_from_text(
         output_language=output_language,
     )
     try:
-        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
+        gen = generate(
+            model=model,
+            prompt=prompt,
+            base_url=base_url,
+            timeout_s=180.0,
+            response_format=_JSON_RESPONSE_FORMAT,
+            think=False,
+            keep_alive="5m",
+            options=_CLASSIFY_GENERATE_OPTIONS,
+        )
     except Exception as exc:  # noqa: BLE001 (MVP: best-effort)
         return AnalysisResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
     if gen.error:
@@ -496,7 +518,16 @@ def _extract_facts_from_text(
         output_language=output_language,
     )
     try:
-        gen = generate(model=model, prompt=prompt, base_url=base_url, timeout_s=180.0)
+        gen = generate(
+            model=model,
+            prompt=prompt,
+            base_url=base_url,
+            timeout_s=180.0,
+            response_format=_JSON_RESPONSE_FORMAT,
+            think=False,
+            keep_alive="5m",
+            options=_FACTS_GENERATE_OPTIONS,
+        )
     except Exception as exc:  # noqa: BLE001
         return FactsResult(status="error", reason=f"Ollama errore: {type(exc).__name__}", model_used=model)
     if gen.error:
@@ -594,7 +625,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
                 )
             return res
         year_hint_text = _extract_year_hint_from_text(text)
-        excerpt = _content_excerpt_for_llm(text, max_chars=14000)
+        excerpt = _content_excerpt_for_llm(text, max_chars=10000)
         model = _text_model_candidates(config)[0] if _text_model_candidates(config) else config.text_model
         t0 = time.perf_counter()
         res = _extract_facts_from_text(
@@ -619,7 +650,7 @@ def extract_facts_item(item: ScanItem, *, config: AnalysisConfig) -> FactsResult
         return replace(res, llm_time_s=llm_elapsed)
 
     if item.kind == "image":
-        max_chars = 14000
+        max_chars = 10000
         # Smart extraction: vision first, OCR only if document detected
         if config.output_language == "it":
             vision_prompt = "Describe this image in one sentence in Italian."

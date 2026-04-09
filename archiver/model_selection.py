@@ -1,9 +1,58 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from .discovery import DiscoveryResult
+
+
+_TEXT_PREFER = (
+    "gemma3:1b",
+    "qwen2.5:3b-instruct",
+    "phi4-mini:latest",
+    "phi4-mini",
+    "qwen3:4b",
+    "qwen3.5:4b",
+    "ministral-3:3b",
+    "gemma2:2b",
+    "qwen2.5:7b",
+    "mistral:latest",
+    "gemma3:latest",
+)
+
+_VISION_PREFER = (
+    "moondream:latest",
+    "gemma3:latest",
+    "llava:latest",
+    "llava:7b",
+    "minicpm-v:latest",
+    "bakllava:latest",
+)
+
+
+def _is_vision_model(model_name: str) -> bool:
+    ml = model_name.lower()
+    if any(token in ml for token in ("llava", "moondream", "minicpm", "bakllava")):
+        return True
+    if "vision" in ml:
+        return True
+    if ml.startswith("gemma3:"):
+        return not any(token in ml for token in ("270m", "1b"))
+    return False
+
+
+def _is_text_candidate(model_name: str) -> bool:
+    ml = model_name.lower()
+    if any(token in ml for token in ("embed", "embedding", "whisper", "tts")):
+        return False
+    return True
+
+
+def _order_candidates(models: list[str], preferred: tuple[str, ...]) -> list[str]:
+    ordered = [model for model in preferred if model in models]
+    ordered.extend(model for model in models if model not in ordered)
+    return ordered
 
 
 def pick_model_candidates(discovery: "DiscoveryResult | None") -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -17,39 +66,27 @@ def pick_model_candidates(discovery: "DiscoveryResult | None") -> tuple[tuple[st
     if not models:
         return (), ()
 
-    known_text_prefer = [
-        "qwen2.5:7b-instruct",
-        "qwen2.5:14b-instruct",
-        "llama3.1:8b-instruct",
-        "llama3.2:3b-instruct",
-        "mistral:7b-instruct",
-        "gemma2:9b-instruct",
-        "phi3:medium",
+    text_candidates = [
+        model
+        for model in models
+        if _is_text_candidate(model) and not (_is_vision_model(model) and not model.lower().startswith(("gemma3:", "ministral-3:")))
     ]
-    text_candidates: list[str] = [m for m in known_text_prefer if m in models]
-    for m in models:
-        ml = m.lower()
-        if m in text_candidates:
-            continue
-        if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
-            continue
-        if "instruct" in ml or "chat" in ml:
-            text_candidates.append(m)
+    vision_candidates = [model for model in models if _is_vision_model(model)]
 
-    known_vision_prefer = [
-        "moondream:latest",
-        "llama3.2-vision:latest",
-        "llava:latest",
-        "bakllava:latest",
-        "minicpm-v:latest",
-    ]
-    vision_candidates: list[str] = [m for m in known_vision_prefer if m in models]
-    for m in models:
-        ml = m.lower()
-        if m in vision_candidates:
-            continue
-        if any(v in ml for v in ("vision", "llava", "moondream", "minicpm", "bakllava")):
-            vision_candidates.append(m)
+    # Keep newer generic names such as `qwen3:4b` and `phi4-mini:latest` eligible even
+    # when they don't advertise themselves with `-instruct` or `-chat`.
+    text_candidates = _order_candidates(text_candidates, _TEXT_PREFER)
+    vision_candidates = _order_candidates(vision_candidates, _VISION_PREFER)
 
-    return tuple(text_candidates[:4]), tuple(vision_candidates[:3])
+    # If discovery returns only generic model names, preserve a predictable ordering.
+    text_candidates = sorted(
+        text_candidates,
+        key=lambda model: (
+            model not in _TEXT_PREFER,
+            not re.search(r":(?:270m|1b|2b|3b|4b)\b", model.lower()),
+            model.lower(),
+        ),
+    )
+    text_candidates = _order_candidates(text_candidates, _TEXT_PREFER)
 
+    return tuple(text_candidates[:6]), tuple(vision_candidates[:4])
